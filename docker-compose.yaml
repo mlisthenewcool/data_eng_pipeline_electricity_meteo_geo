@@ -1,22 +1,72 @@
-version: "5.0.1"
+# --- Notes
+# PostgreSQL 17 is the latest supported version by Airflow
+# https://airflow.apache.org/docs/apache-airflow/stable/installation/prerequisites.html
+#
+# Use psycopg (v3) instead of psycopg2 with custom build
 
 services:
-  db-service:
-    container_name: db-container
-    image: postgres:latest
+  postgres_service:
+    container_name: postgres_container
+    image: postgres:17
     restart: always
     shm_size: 128mb
     ports:
       - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro # init scripts are executed only on empty volume
     environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/db_root_password
-      POSTGRES_USER_FILE: /run/secrets/db_root_username
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_root_password
+      POSTGRES_USER_FILE: /run/secrets/postgres_root_username
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $$(cat /run/secrets/postgres_root_username) -d airflow" ]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     secrets:
-      - db_root_password
-      - db_root_username
+      - postgres_root_password
+      - postgres_root_username
+
+  airflow_service:
+    container_name: airflow_container # remove scale possibility
+    build:
+      context: .
+      dockerfile: airflow/Dockerfile
+    restart: always
+    depends_on:
+      postgres_service:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: >
+        bash -c 'printf "postgresql+psycopg://%s:%s@postgres_service/airflow" "$$(cat /run/secrets/postgres_root_username)" "$$(cat /run/secrets/postgres_root_password)"'
+      AIRFLOW__CORE__LOAD_EXAMPLES: False
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Paris
+      PYTHONPATH: /opt/airflow/src
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+    healthcheck:
+      # https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/v2/monitor/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s # 60s
+    command: standalone
+    secrets:
+      - postgres_root_password
+      - postgres_root_username
 
 secrets:
-  db_root_password:
-    file: secrets/db_root_password.txt
-  db_root_username:
-    file: secrets/db_root_username.txt
+  postgres_root_password:
+    file: secrets/postgres_root_password.txt
+  postgres_root_username:
+    file: secrets/postgres_root_username.txt
+
+volumes:
+  postgres_data:
