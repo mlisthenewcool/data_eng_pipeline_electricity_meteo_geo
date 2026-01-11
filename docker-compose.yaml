@@ -1,0 +1,22 @@
+version: "5.0.1"
+
+services:
+  db-service:
+    container_name: db-container
+    image: postgres:latest
+    restart: always
+    shm_size: 128mb
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_root_password
+      POSTGRES_USER_FILE: /run/secrets/db_root_username
+    secrets:
+      - db_root_password
+      - db_root_username
+
+secrets:
+  db_root_password:
+    file: secrets/db_root_password.txt
+  db_root_username:
+    file: secrets/db_root_username.txt
