@@ -55,6 +55,7 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: False
 
       # Reduce verbosity ...
+      # AIRFLOW__LOGGING__LOGGING_LEVEL: "DEBUG"
       AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 30 # 5 by default
     ports:
       - "127.0.0.1:8080:8080"
@@ -64,7 +65,7 @@ services:
       - ./data:/opt/airflow/data
     healthcheck:
       # https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/api/v2/monitor/health || exit 1"]
+      test: [ "CMD-SHELL", "curl -sf http://localhost:8080/api/v2/monitor/health || exit 1" ]
       interval: 30s
       timeout: 5s
       retries: 3
