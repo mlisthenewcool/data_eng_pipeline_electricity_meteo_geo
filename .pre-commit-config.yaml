@@ -1,0 +1,34 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff-check
+        entry: uv run ruff check
+        args: [ --fix, --force-exclude ]
+        language: system
+        types: [ python ]
+
+      - id: ruff-format
+        name: ruff-format
+        entry: uv run ruff format
+        language: system
+        types: [ python ]
+
+      - id: ty
+        name: ty
+        entry: uv run ty check
+        language: system
+        types: [ python ]
+
+        # hack: 'exclude' in pyproject.toml is somehow not read
+        # better than 'pass_filenames: false' for performance
+        # preventing pre-commit to check the whole project everytime
+        files: ^(src|tests)/
+
+      - id: pytest
+        name: pytest
+        entry: uv run pytest
+        language: system
+        pass_filenames: false    # to run every test, even if files aren't modified
+        files: \.(py|yaml|json)$ # run the hook only if any .(py|yaml|json) changed
+        #stages: [ manual, push ] # if tests are taking too much time

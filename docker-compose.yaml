@@ -1,8 +1,17 @@
 # --- Notes
-# PostgreSQL 17 is the latest supported version by Airflow
+# PostgreSQL 17 is the latest supported version by Airflow.
 # https://airflow.apache.org/docs/apache-airflow/stable/installation/prerequisites.html
 #
-# Use psycopg (v3) instead of psycopg2 with custom build
+# Use psycopg (v3) instead of psycopg2 with custom build.
+#
+# https://airflow.apache.org/docs/apache-airflow/stable/configurations-ref.html
+
+
+# --- Personal notes
+# La clé 'volumes' en bas du fichier déclare un espace de stockage nommé (named volume)
+# alors que la ligne déclarée dans le service postgres fait le montage de cet espace
+# dans le répertoire dans lequel PostgreSQL écrit ses tables.
+# Sans utiliser de stockage nommé, l'arrêt du docker compose détruit les données.
 
 services:
   postgres_service:
@@ -41,9 +50,12 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: >
         bash -c 'printf "postgresql+psycopg://%s:%s@postgres_service/airflow" "$$(cat /run/secrets/postgres_root_username)" "$$(cat /run/secrets/postgres_root_password)"'
-      AIRFLOW__CORE__LOAD_EXAMPLES: False
       AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Paris
-      PYTHONPATH: /opt/airflow/src
+      PYTHONPATH: /opt/airflow/src # required to let Airflow reach code written in src/
+      AIRFLOW__CORE__LOAD_EXAMPLES: False
+
+      # Reduce verbosity ...
+      AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 30 # 5 by default
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
