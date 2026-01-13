@@ -31,7 +31,7 @@ RUN uv pip list --outdated --format=json | \
     python -c "import json, sys; print('\n'.join([x['name'] for x in json.load(sys.stdin)]))" | \
     xargs -n1 uv pip install --no-cache -U
 
-# optional, you can check results with `docker buildx history logs`
+# optional, check results with `docker buildx history logs`
 RUN uv pip list
 RUN uv pip list --outdated
 
