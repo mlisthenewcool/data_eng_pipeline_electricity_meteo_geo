@@ -6,6 +6,8 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
 DATA_DIR = ROOT_DIR / "data"
 
+DATA_CATALOG_PATH = DATA_DIR / "catalog.yaml"
+
 # =============================================================================
 # Download Settings
 # =============================================================================

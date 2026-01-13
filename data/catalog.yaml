@@ -1,0 +1,54 @@
+#dataset_name:
+#  # description: "..."
+#  source:
+#    provider: ""
+#    url: ""
+#    format: ""
+#    inner_file: ""
+#    # license: "..."
+#    # documentation_url: "..."
+#  ingestion:
+#    version: ""
+#    frequency: ""
+#    # retention_days: "..."
+#    # retention_versions: "..."
+#    # type: "snapshot" # vs incremental des observations météo par exemple
+#  storage: ""
+#  # quality: "..."
+#  # schema: "..."
+#  # tags: "..."
+#  # owner: "..."
+
+
+datasets:
+  ign_contours_iris:
+    source:
+      provider: "IGN"
+      url: "https://data.geopf.fr/telechargement/download/CONTOURS-IRIS/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2025-01-01/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2025-01-01.7z"
+      format: "7z"
+      inner_file: "iris.gpkg"
+    ingestion:
+      version: "2025_01_01"
+      frequency: "hourly"
+      # url_check_refresh: ""https://data.geopf.fr/telechargement/download/CONTOURS-IRIS/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2026-01-01/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2026-01-01.7z""
+    storage: "ign/contours_iris/{version}.parquet"
+
+  odre_installations:
+    source:
+      provider: "ODRE"
+      url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/registre-national-installation-production-stockage-electricite-agrege/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
+      format: "parquet"
+    ingestion:
+      version: "2025_10_31"
+      frequency: "monthly"
+    storage: "odre/installations/{version}.parquet"
+
+  meteo_france_stations:
+    source:
+      provider: "Météo France"
+      url: "https://www.data.gouv.fr/api/1/datasets/r/1fe544d8-4615-4642-a307-5956a7d90922"
+      format: "json" # "geojson"
+    ingestion:
+      version: "2026_01_01"
+      frequency: "daily" # todo: temporalité:fréquence=annuelle ?
+    storage: "meteo_france/stations/{version}.parquet"

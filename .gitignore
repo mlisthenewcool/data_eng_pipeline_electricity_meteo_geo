@@ -8,6 +8,8 @@ secrets/**
 data/**/*
 # but don't ignore folders so we can scan them
 !data/**/
+# never ignore catalog.yaml
+!data/catalog.yaml
 # never ignore .gitkeep
 !data/**/.gitkeep
 
