@@ -29,7 +29,7 @@ from pydantic import (
     model_validator,
 )
 
-from de_projet_perso.core.exceptions import InvalidCatalogError
+from de_projet_perso.core.exceptions import DatasetNotFoundError, InvalidCatalogError
 
 
 class StrictModel(BaseModel):
@@ -47,11 +47,15 @@ class Source(StrictModel):
     inner_file: str | None = None
 
     @model_validator(mode="after")
-    def inner_file_is_required_for_archive_format(self) -> Self:
+    def inner_file_is_required_for_archive_formats_only(self) -> Self:
         """Ensure inner_file is specified for archive formats like 7z."""
         _archive_formats: list[str] = ["7z"]
+
         if (self.format in _archive_formats) and (self.inner_file is None):
             raise ValueError(f"inner_file is required when format is one of {_archive_formats}")
+
+        if (self.format not in _archive_formats) and (self.inner_file is not None):
+            raise ValueError("inner_file shouldn't be defined when format is not an archive")
         return self
 
 
@@ -72,7 +76,7 @@ class Dataset(StrictModel):
     @field_validator("storage")
     @classmethod
     def must_contain_version_placeholder(cls, v: str) -> str:
-        """S'assure que le chemin de stockage contient bien le placeholder {version}."""
+        """Ensure the storage path contains the {version} placeholder."""
         if "{version}" not in v:
             raise ValueError("storage path must contain '{version}' placeholder")
         return v
@@ -91,7 +95,7 @@ class DataCatalog(StrictModel):
     datasets: dict[str, Dataset]
 
     @classmethod
-    @cache
+    @cache  # NOTE: is it a bad idea if we need to reload file for any reason ?
     def load(cls, path: Path) -> Self:
         """Load and validate the data catalog from YAML.
 
@@ -130,6 +134,6 @@ class DataCatalog(StrictModel):
         dataset = self.datasets.get(name)
 
         if not dataset:
-            raise Exception()
+            raise DatasetNotFoundError(name=name, available_datasets=list(self.datasets.keys()))
 
         return dataset
