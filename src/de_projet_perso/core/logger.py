@@ -46,26 +46,6 @@ if TYPE_CHECKING:
 _AIRFLOW_LOGGER_NAME = "MY_LOGGER"
 _LOG_LEVEL = "DEBUG"
 
-# ANSI escape codes for terminal coloring (both \x1b and \033 are equivalent)
-_SUPPORT_COLORS = sys.stderr.isatty()
-_FAINT = "\033[2m" if _SUPPORT_COLORS else ""
-_LIGHT_PURPLE = "\033[1;35m" if _SUPPORT_COLORS else ""
-_LIGHT_WHITE = "\033[1;37m" if _SUPPORT_COLORS else ""
-_RESET = "\033[0m" if _SUPPORT_COLORS else ""
-
-_ANSI_PATTERN: Pattern[str] = re.compile(r"\033\[[0-9;]*m")
-
-# Log formats: Airflow format is simplified since it already shows time & context
-_FORMAT_TERMINAL = (
-    "<dim>{time:HH:mm:ss}</dim> | <level>{level: <8}</level> | <level>{message}</level>{extra_str}"
-)
-_FORMAT_AIRFLOW = "{message}{extra_str}"
-
-
-def _is_mutable_record(record: "Record") -> TypeGuard[dict[str, Any]]:
-    """Check if the object is a mutable dictionary (TypeGuard)."""
-    return isinstance(record, dict) or hasattr(record, "__setitem__")
-
 
 @cache
 def _is_airflow_context() -> bool:
@@ -79,6 +59,43 @@ def _is_airflow_context() -> bool:
     """
     airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
     return os.path.exists(os.path.join(airflow_home, "airflow.cfg"))
+
+
+def _should_use_colors() -> bool:
+    """Determine if ANSI escape codes should be used for coloring.
+
+    Colors are disabled in Airflow environments to prevent UI clutter and
+    automatically suppressed if the output stream (stderr) is not a TTY
+    (e.g., when redirecting to a file).
+
+    Returns:
+        True if the environment supports and expects colored output, False otherwise.
+    """
+    if _is_airflow_context():
+        return False
+    return sys.stderr.isatty()
+
+
+_USE_COLORS = _should_use_colors()
+
+# ANSI escape codes for terminal coloring (both \x1b and \033 are equivalent)
+_FAINT = "\033[2m" if _USE_COLORS else ""
+_LIGHT_PURPLE = "\033[1;35m" if _USE_COLORS else ""
+_LIGHT_WHITE = "\033[1;37m" if _USE_COLORS else ""
+_RESET = "\033[0m" if _USE_COLORS else ""
+
+_ANSI_PATTERN: Pattern[str] = re.compile(r"\033\[[0-9;]*m")
+
+# Log formats: Airflow format is simplified since it already shows time & context
+_FORMAT_TERMINAL = (
+    "<dim>{time:HH:mm:ss}</dim> | <level>{level: <8}</level> | <level>{message}</level>{extra_str}"
+)
+_FORMAT_AIRFLOW = "{message}{extra_str}"
+
+
+def _is_mutable_record(record: "Record") -> TypeGuard[dict[str, Any]]:
+    """Check if the object is a mutable dictionary (TypeGuard)."""
+    return isinstance(record, dict) or hasattr(record, "__setitem__")
 
 
 def _strip_ansi(text: str) -> str:
@@ -135,9 +152,7 @@ def _format_extra(record: "Record") -> None:
         record["extra_str"] = ""
         return
 
-    # indent = " " * (22 if _is_airflow_context() else 20)
-    # symbol = "└─ "
-
+    # indent sizes are based on both Airflow UI prefix & standard terminal format
     if _is_airflow_context():
         indent = " " * 22
         prefix = f"\n{indent}└─ "
@@ -166,6 +181,23 @@ def _airflow_sink(message: "Message") -> None:
     level_name = record["level"].name
     level_no = logging.getLevelName(level=level_name)
     logging.getLogger(name=_AIRFLOW_LOGGER_NAME).log(level=level_no, msg=message.strip())
+
+    # # 2. Capture des extras pour XCom (Nouveauté)
+    # # On ne pousse en XCom que si on est dans Airflow et que c'est une INFO/ERROR avec extras
+    # extra = record.get("extra", {})
+    # if _is_airflow_context() and extra:
+    #     try:
+    #         from airflow.operators.python import get_current_context
+    #         context = get_current_context()
+    #         ti = context["ti"]
+    #
+    #         # On pousse chaque clé de l'extra dans XCom avec un préfixe
+    #         for key, value in extra.items():
+    #             ti.xcom_push(key=f"log_metric_{key}", value=value)
+    #     except (ImportError, RuntimeError):
+    #         # On n'est pas dans un contexte de tâche Airflow (ex: parsing)
+    #         # ou Airflow n'est pas installé. On ignore silencieusement.
+    #         pass
 
 
 class LoguruLogger:
@@ -234,7 +266,7 @@ class LoguruLogger:
                 sys.stderr,
                 level=level,
                 format=_FORMAT_TERMINAL,
-                colorize=True,
+                colorize=_USE_COLORS,
                 backtrace=True,
                 diagnose=True,
             )
@@ -253,6 +285,8 @@ class LoguruLogger:
         exc_info: bool = kwargs.pop("exc_info", False)
 
         bound = self._logger.bind(**extra)
+        # depth=2 is required so Loguru correctly identifies the caller's
+        # filename and line number, skipping the _log() and info/debug() wrappers.
         getattr(bound.opt(depth=2, exception=exc_info), level)(message)
 
     def debug(self, message: str, **kwargs: Any) -> None:
