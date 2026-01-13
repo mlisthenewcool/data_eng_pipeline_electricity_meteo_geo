@@ -10,10 +10,17 @@ RUN apt-get update \
     && apt-get autoremove --purge \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Create the data directory and assign ownership to the 'airflow' user
+# before volume mounting. This ensures the application has the necessary
+# permissions to create subdirectories at runtime, preventing failures in
+# dest_path.parent.mkdir(parents=True, exist_ok=True)."
+RUN mkdir -p /opt/airflow/data && chown -R airflow:root /opt/airflow/data
+
 USER airflow
 RUN pip install --no-cache-dir --upgrade uv
 RUN uv python upgrade
 
+# TODO: use psycopg with system tools instead of binary ?
 RUN uv pip install --no-cache \
     aiofiles aiohttp duckdb loguru polars "psycopg[binary]" py7zr pydantic \
     python-json-logger pyyaml tqdm

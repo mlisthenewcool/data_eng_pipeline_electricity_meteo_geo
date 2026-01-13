@@ -53,7 +53,6 @@ services:
       AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Paris
       PYTHONPATH: /opt/airflow/src # required to let Airflow reach code written in src/
       AIRFLOW__CORE__LOAD_EXAMPLES: False
-
       AIRFLOW__LOGGING__LOGGING_LEVEL: "INFO" # TODO: consistency with custom logging
       AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 5 # by default
     ports:
@@ -61,7 +60,8 @@ services:
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./src:/opt/airflow/src
-      - ./data:/opt/airflow/data
+      # - ./data:/opt/airflow/data
+      - airflow_data:/opt/airflow/data # persistent
     healthcheck:
       # https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html
       test: [ "CMD-SHELL", "curl -sf http://localhost:8080/api/v2/monitor/health || exit 1" ]
@@ -82,3 +82,4 @@ secrets:
 
 volumes:
   postgres_data:
+  airflow_data:

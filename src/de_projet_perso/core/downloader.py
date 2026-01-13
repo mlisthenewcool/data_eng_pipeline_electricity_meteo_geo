@@ -189,7 +189,7 @@ async def download_to_file(
     async with session.get(url, timeout=timeout) as response:
         response.raise_for_status()
 
-        # dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
         sha256_hash = hashlib.sha256()
         total_bytes = 0
         total_size = int(response.headers.get("content-length", 0))
@@ -484,7 +484,7 @@ async def _test_download() -> None:
 
     async with aiohttp.ClientSession() as session:
         try:
-            await download_to_file(session, url, archive_path, ExistingFileAction.SKIP)
+            await download_to_file(session, url, archive_path, ExistingFileAction.OVERWRITE)
         except (RetryExhaustedError, FileShouldNotExist) as e:
             logger.error("Download failed", extra={"error": str(e)})
             sys.exit(-1)
