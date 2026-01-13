@@ -1,11 +1,13 @@
 # noqa: D100
-
-
 from datetime import datetime
 
 from airflow.sdk import dag, task
 
-from de_projet_perso.example import test_import_in_dags, test_with_custom_logger
+from de_projet_perso.example import (
+    test_download_file_in_dags,
+    test_import_in_dags,
+    test_with_custom_logger_in_dags,
+)
 
 
 @task.bash
@@ -25,7 +27,12 @@ def echo_func_from_package():  # noqa: D103
 
 @task.python
 def echo_func_from_package_with_custom_logger():  # noqa: D103
-    test_with_custom_logger()
+    test_with_custom_logger_in_dags()
+
+
+@task.python
+def download_func_from_package():  # noqa: D103
+    test_download_file_in_dags()
 
 
 @dag(
@@ -38,6 +45,7 @@ def echo_func_from_package_with_custom_logger():  # noqa: D103
 def example_dag():  # noqa: D103
     echo_working() >> echo_only_if_first_succeed()
     echo_func_from_package() >> echo_func_from_package_with_custom_logger()
+    download_func_from_package()
 
 
 example_dag()

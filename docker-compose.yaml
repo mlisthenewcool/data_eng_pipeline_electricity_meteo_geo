@@ -54,9 +54,8 @@ services:
       PYTHONPATH: /opt/airflow/src # required to let Airflow reach code written in src/
       AIRFLOW__CORE__LOAD_EXAMPLES: False
 
-      # Reduce verbosity ...
-      # AIRFLOW__LOGGING__LOGGING_LEVEL: "DEBUG"
-      AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 30 # 5 by default
+      AIRFLOW__LOGGING__LOGGING_LEVEL: "INFO" # TODO: consistency with custom logging
+      AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 5 # by default
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

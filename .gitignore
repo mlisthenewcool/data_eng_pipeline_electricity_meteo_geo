@@ -4,8 +4,11 @@
 secrets/**
 !secrets/.gitkeep
 
-data/*
+# ignore all in data
+data/**/*
+# but don't ignore folders so we can scan them
 !data/**/
+# never ignore .gitkeep
 !data/**/.gitkeep
 
 .idea/

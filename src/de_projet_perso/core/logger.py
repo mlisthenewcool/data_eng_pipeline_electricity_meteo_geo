@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 # TODO: Move to settings. LOG_LEVEL should be defined via Docker for consistency.
 # TODO: Consider moving AIRFLOW_LOGGER_NAME to settings as well.
 _AIRFLOW_LOGGER_NAME = "MY_LOGGER"
-_LOG_LEVEL = "DEBUG"
+_LOG_LEVEL = "INFO"
 
 
 @cache
