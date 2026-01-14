@@ -63,11 +63,6 @@ class TestLoguruLogger:
         assert "no exception" in output
         assert "You called logger.exception() with no active exception." in output
 
-    # def test_depth_points_to_caller_not_internal(self) -> None:
-    #     """depth=2 makes log record point to caller, not internal _log method."""
-    #     # TODO: verify if we really need this test
-    #     pass
-
 
 class TestFormatExtra:
     """Tests for _format_extra method."""
@@ -162,63 +157,16 @@ class TestStripAnsi:
         assert _strip_ansi(input_text) == expected
 
 
-# class TestAirflowSink:
+# TODO: class TestAirflowSink:
 #     """Tests for _airflow_sink function."""
 #
 #     def test_airflow_sink_routes_to_logging(self, mocker: "MockerFixture") -> None:
 #         """_airflow_sink forwards messages to standard logging with correct level."""
-#         # TODO: check new test
-#
-#         # Create mock message object matching loguru's Message structure
-#         mock_message = mocker.MagicMock()
-#         mock_message.record = {"level": mocker.MagicMock()}
-#         mock_message.record["level"].name = "WARNING"
-#         mock_message.strip.return_value = "Test warning message"
-#
-#         # Patch logging.getLogger only in the logger module
-#         mock_logger = mocker.MagicMock()
-#         mock_get_logger = mocker.patch(
-#             "de_projet_perso.core.logger.logging.getLogger", return_value=mock_logger
-#         )
-#
-#         _airflow_sink(mock_message)
-#
-#         # Verify getLogger was called with correct name
-#         mock_get_logger.assert_called_once()
-#         # Verify log was called
-#         mock_logger.log.assert_called_once()
-#         call_args = mock_logger.log.call_args
-#         assert call_args.kwargs["msg"] == "Test warning message"
 #
 #     def test_configure_uses_airflow_sink_when_in_airflow(
 #         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 #     ) -> None:
 #         """LoguruLogger._configure uses _airflow_sink when in Airflow context."""
-#         # TODO: check new test
-#
-#         # Clear cache and mock _is_airflow_context to return True
-#         logger_module._is_airflow_context.cache_clear()
-#         monkeypatch.setattr(logger_module, "_is_airflow_context", lambda: True)
-#
-#         # Setup a handler to capture logs sent to the airflow logger
-#         captured_logs: list[str] = []
-#         handler = logging.Handler()
-#         handler.emit = lambda record: captured_logs.append(record.getMessage())
-#         logging.getLogger(logger_module._AIRFLOW_LOGGER_NAME).addHandler(handler)
-#         logging.getLogger(logger_module._AIRFLOW_LOGGER_NAME).setLevel(logging.DEBUG)
-#
-#         try:
-#             # Create new logger instance (will use Airflow config)
-#             LoguruLogger._reset()
-#             airflow_logger = LoguruLogger(level="DEBUG")
-#             airflow_logger.info(message="test airflow config", extra={"key": "value"})
-#
-#             # Verify log was routed to airflow logger (not stderr)
-#             stderr_output = capsys.readouterr().err
-#             assert "test airflow config" not in stderr_output  # Not in stderr
-#             assert any("test airflow config" in log for log in captured_logs)  # In airflow logger
-#         finally:
-#             logging.getLogger(logger_module._AIRFLOW_LOGGER_NAME).removeHandler(handler)
 
 
 class TestModuleExport:
