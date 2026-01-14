@@ -1,4 +1,5 @@
-# noqa: D100
+"""TODO documentation."""
+
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
@@ -31,3 +32,28 @@ RETRY_INITIAL_DELAY: float = 1
 
 # Multiplier applied to delay after each failed attempt
 RETRY_BACKOFF_FACTOR: float = 2.0
+
+# TODO
+# from pydantic_settings import BaseSettings
+#
+#
+# class Settings(BaseSettings):
+#     """Application settings loaded from environment."""
+#
+#     # Paths
+#     root_dir: Path = Path(__file__).parent.parent.parent
+#     data_dir: Path = root_dir / "data"
+#
+#     # Download
+#     download_chunk_size: int = 1024 * 1024
+#     download_timeout_total: int = 600
+#
+#     # Retry
+#     retry_max_attempts: int = 3
+#     retry_initial_delay: float = 1.0
+#
+#     class Config:
+#         env_prefix = "DE_"  # Variables d'environnement DE_*
+#
+#
+# settings = Settings()

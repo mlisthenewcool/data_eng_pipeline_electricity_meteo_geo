@@ -20,8 +20,8 @@ USER airflow
 RUN pip install --no-cache-dir --upgrade uv
 RUN uv python upgrade
 
-# TODO: use psycopg with system tools instead of binary ?
-# TODO: use `--mount=type=cache` instead of --no-cache ?
+# NOTE: use psycopg with system tools instead of binary ?
+# NOTE: use `--mount=type=cache` instead of --no-cache ?
 RUN uv pip install --no-cache \
     aiofiles aiohttp duckdb loguru polars "psycopg[binary]" py7zr pydantic \
     python-json-logger pyyaml tqdm

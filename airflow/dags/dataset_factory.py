@@ -1,4 +1,5 @@
-# noqa: D100
+"""TODO: documentation."""
+
 from airflow.sdk import Metadata, asset
 
 from de_projet_perso.core.catalog import DataCatalog
@@ -19,6 +20,16 @@ for name, ds in catalog.datasets.items():
         logger.info(message=f"inside {name} asset func !")
 
         # TODO: mettre la logique…
+        # 1. déterminer action (en fonction de l'état du dataset et de sa fréquence)
+        # TODO: quelles métadonnées ajouter à celles d'Airflow ?
+        # * sha256
+        # last_successful_ingestion ? normalement Airflow
+        # last_error ? normalement Airflow
+        # updated_at ? normalement Airflow
+        # version_in_storage ? "latest" doit pointer là-dessus
+        # bronze/silver status ? se baser sur les fichiers
+        # bronze/silver paths ? se baser sur un pattern
+        # history (started/finished_at, duration_seconds, status, version, sha256, paths, error)
 
         # TODO: devrait permettre de maintenir un data_catalog_state ?
         yield Metadata(
