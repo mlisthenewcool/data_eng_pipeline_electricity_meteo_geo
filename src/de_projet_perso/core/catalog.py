@@ -105,6 +105,7 @@ class Ingestion(StrictModel):
 class Dataset(StrictModel):
     """Complete dataset configuration combining source, ingestion, storage information."""
 
+    description: str
     source: Source
     ingestion: Ingestion
     storage: str
