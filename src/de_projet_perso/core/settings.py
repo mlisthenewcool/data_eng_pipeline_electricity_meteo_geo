@@ -1,12 +1,11 @@
-# from typing import Literal  # noqa: D100
-#
-# LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "DEBUG"
+# noqa: D100
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
 DATA_DIR = ROOT_DIR / "data"
 
-DATA_CATALOG_PATH = DATA_DIR / "catalog.yaml"
+# TODO: move to /data/ folder, but then have to move the file from local to airflow container
+DATA_CATALOG_PATH = ROOT_DIR / "src/data_catalog.yaml"
 
 # =============================================================================
 # Download Settings
