@@ -15,6 +15,7 @@ Example:
     >>> path = dataset.get_storage_path()
 """
 
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Self
@@ -101,6 +102,16 @@ class Ingestion(StrictModel):
     version: str
     frequency: IngestionFrequency
 
+    @field_validator("version")
+    @classmethod
+    def validate_version_format(cls, v: str) -> str:
+        """Ensure version follows YYYY_MM_DD format."""
+        try:
+            datetime.strptime(v, "%Y_%m_%d")
+        except ValueError:
+            raise ValueError(f"Version must follow YYYY_MM_DD format, got: {v}")
+        return v
+
 
 class Dataset(StrictModel):
     """Complete dataset configuration combining source, ingestion, storage information."""
@@ -123,6 +134,13 @@ class Dataset(StrictModel):
         return Path(self.storage.format(version=self.ingestion.version))
 
 
+def format_pydantic_errors(pydantic_errors: ValidationError) -> dict[str, str]:
+    """TODO: move to appropriate location to generalize."""
+    return {
+        ".".join(str(item) for item in err["loc"]): err["msg"] for err in pydantic_errors.errors()
+    }
+
+
 class DataCatalog(StrictModel):
     """Root catalog model containing all dataset configurations.
 
@@ -142,8 +160,8 @@ class DataCatalog(StrictModel):
             Validated DataCatalog instance.
 
         Raises:
-            FileNotFoundError: If the catalog file doesn't exist.
-            ValidationError: If the YAML doesn't match the expected schema.
+            InvalidCatalogError: If the catalog file doesn't exist or the YAML
+                doesn't match the expected schema.
         """
         if not path.exists():
             raise InvalidCatalogError(path=path, reason="file doesn't exist")
@@ -152,8 +170,14 @@ class DataCatalog(StrictModel):
             with path.open() as f:
                 data = yaml.safe_load(f)
             return cls.model_validate(data)
-        except (yaml.YAMLError, ValidationError) as e:
+        except yaml.YAMLError as e:
             raise InvalidCatalogError(path=path, reason=str(e)) from e
+        except ValidationError as validation_errors:
+            raise InvalidCatalogError(
+                path=path,
+                reason="Pydantic validation error",
+                validation_errors=format_pydantic_errors(validation_errors),
+            ) from None
 
     def get_dataset(self, name: str) -> Dataset:
         """Retrieve a dataset configuration by name.
