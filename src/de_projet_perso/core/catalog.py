@@ -15,9 +15,9 @@ Example:
     >>> path = dataset.get_storage_path()
 """
 
-from functools import cache
+from enum import StrEnum
 from pathlib import Path
-from typing import Literal, Self
+from typing import Self
 
 import yaml
 from pydantic import (
@@ -38,24 +38,60 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SourceFormat(StrEnum):
+    """Supported source file formats."""
+
+    SEVEN_Z = "7z"
+    PARQUET = "parquet"
+    JSON = "json"
+
+    @property
+    def is_archive(self) -> bool:
+        """Return True if the format is a compressed archive."""
+        return self in [SourceFormat.SEVEN_Z]
+
+
+class IngestionFrequency(StrEnum):
+    """Expected data update frequency from the source."""
+
+    HOURLY = "hourly"
+    DAILY = "daily"
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+    YEARLY = "yearly"
+    UNKNOWN = "unknown"
+
+    @property
+    def airflow_schedule(self) -> str | None:
+        """Map the frequency to a valid Airflow schedule expression."""
+        mapping = {
+            IngestionFrequency.HOURLY: "@hourly",
+            IngestionFrequency.DAILY: "@daily",
+            IngestionFrequency.WEEKLY: "@weekly",
+            IngestionFrequency.MONTHLY: "@monthly",
+            IngestionFrequency.YEARLY: "@yearly",
+            IngestionFrequency.UNKNOWN: None,
+        }
+        return mapping.get(self)
+
+
 class Source(StrictModel):
     """Data source configuration defining where and how to fetch data."""
 
     provider: str
     url: HttpUrl
-    format: Literal["7z", "parquet", "json"]
+    format: SourceFormat
     inner_file: str | None = None
 
     @model_validator(mode="after")
     def inner_file_is_required_for_archive_formats_only(self) -> Self:
         """Ensure inner_file is specified for archive formats like 7z."""
-        _archive_formats: list[str] = ["7z"]
+        if self.format.is_archive and self.inner_file is None:
+            raise ValueError(f"inner_file is required for archive format: {self.format}")
 
-        if (self.format in _archive_formats) and (self.inner_file is None):
-            raise ValueError(f"inner_file is required when format is one of {_archive_formats}")
+        if not self.format.is_archive and self.inner_file is not None:
+            raise ValueError(f"inner_file cannot be defined for non-archive format: {self.format}")
 
-        if (self.format not in _archive_formats) and (self.inner_file is not None):
-            raise ValueError("inner_file shouldn't be defined when format is not an archive")
         return self
 
 
@@ -63,7 +99,7 @@ class Ingestion(StrictModel):
     """Data ingestion configuration defining which version and when to fetch data."""
 
     version: str
-    frequency: Literal["hourly", "daily", "weekly", "monthly", "yearly", "unknown"]
+    frequency: IngestionFrequency
 
 
 class Dataset(StrictModel):
@@ -95,7 +131,6 @@ class DataCatalog(StrictModel):
     datasets: dict[str, Dataset]
 
     @classmethod
-    @cache  # NOTE: is it a bad idea if we need to reload file for any reason ?
     def load(cls, path: Path) -> Self:
         """Load and validate the data catalog from YAML.
 
