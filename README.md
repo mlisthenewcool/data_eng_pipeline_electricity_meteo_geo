@@ -14,7 +14,7 @@ Objectif : pipeline de données énergétiques, météorologiques et géographiq
 
 ## Data Pipeline
 
-Voir [README_DATA.md](./README_DATA.md)
+Voir [README_DATA.md](docs/README_DATA.md)
 
 Architecture des données
 
@@ -32,7 +32,7 @@ Layers
 
 ## Développement
 
-Voir [README_DX.md](./README_DX.md)
+Voir [README_DX.md](docs/README_DX.md)
 
 ## TODO
 
@@ -41,6 +41,7 @@ Voir [README_DX.md](./README_DX.md)
     * tests/test_downloader.py
     * notebooks/
 
+* passage à pydantic-settings
 * déplacer data_catalog.yaml
 * modifier les raise ... from e
 * comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant la validation ?
@@ -48,6 +49,9 @@ Voir [README_DX.md](./README_DX.md)
     * test_logger
         * vérifier la redirection vers Airflow
         * vérifier que passer un objet non mutable à la méthode _format_extra ne change rien
+
+* ajouter configuration Open Lineage
+    * https://airflow.apache.org/docs/apache-airflow-providers-openlineage/stable/guides/user.html
 
 
 * changer structure code python
