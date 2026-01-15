@@ -281,7 +281,7 @@ class LoguruLogger:
             message: The log message.
             **kwargs: Optional ``extra`` dict and ``exc_info`` bool.
         """
-        extra: dict[str, Any] = kwargs.pop("extra", {})
+        extra: dict[str, Any] = kwargs.pop("extra", {}) or {}
         exc_info: bool = kwargs.pop("exc_info", False)
 
         bound = self._logger.bind(**extra)
