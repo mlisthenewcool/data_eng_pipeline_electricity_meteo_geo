@@ -35,7 +35,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from de_projet_perso.core.settings import DATA_STATE_PATH
+from de_projet_perso.core.settings import settings
 from de_projet_perso.datacatalog import StrictModel
 
 
@@ -111,7 +111,7 @@ class PipelineStateManager:
     @classmethod
     def get_state_path(cls, dataset_name: str) -> Path:
         """Retourne le chemin du fichier state."""
-        return DATA_STATE_PATH / f"{dataset_name}.json"
+        return settings.data_state_dir_path / f"{dataset_name}.json"
 
     @classmethod
     def load(cls, dataset_name: str) -> PipelineState | None:

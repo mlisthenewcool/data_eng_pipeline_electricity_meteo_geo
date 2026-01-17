@@ -28,7 +28,7 @@ from airflow.sdk import DAG, Asset, Metadata, dag, task
 from de_projet_perso.airflow.adapters import AirflowTaskAdapter
 from de_projet_perso.core.exceptions import InvalidCatalogError
 from de_projet_perso.core.logger import logger
-from de_projet_perso.core.settings import DATA_CATALOG_PATH, DATA_DIR
+from de_projet_perso.core.settings import settings
 from de_projet_perso.datacatalog import DataCatalog, Dataset
 from de_projet_perso.pipeline.decision import PipelineDecisionEngine
 from de_projet_perso.pipeline.downloader import PipelineDownloader
@@ -119,7 +119,7 @@ def _create_asset_for_dataset(name: str, dataset: Dataset) -> Asset:
     """
     return Asset(
         name=f"{name}_silver",
-        uri=f"file:///{DATA_DIR / dataset.get_storage_path('silver')}",
+        uri=f"file:///{settings.data_dir_path / dataset.get_storage_path('silver')}",
         group="data-pipeline",
         extra={
             "provider": dataset.source.provider,
@@ -157,7 +157,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
 
         Returns task_id of next task to execute.
         """
-        action = PipelineDecisionEngine.decide_action(dataset_name, dataset, DATA_DIR)
+        action = PipelineDecisionEngine.decide_action(dataset_name, dataset, settings.data_dir_path)
 
         if action == PipelineAction.SKIP:
             return "mark_skipped"
@@ -226,7 +226,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         Returns:
             Dict serialized for XCom (DownloadResult → dict)
         """
-        dest_dir = DATA_DIR / "landing" / dataset_name
+        dest_dir = settings.data_dir_path / "landing" / dataset_name
 
         result = PipelineDownloader.download(
             dataset_name=dataset_name,
@@ -252,7 +252,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         # Deserialize typed result from XCom
         download_result = AirflowTaskAdapter.from_xcom_download(download_data)
 
-        dest_dir = DATA_DIR / "landing" / dataset_name
+        dest_dir = settings.data_dir_path / "landing" / dataset_name
 
         result = PipelineDownloader.extract_archive(
             archive_path=download_result.path,
@@ -295,7 +295,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         # Deserialize typed result from XCom
         landing_result = AirflowTaskAdapter.from_xcom_landing(landing_data)
 
-        bronze_dir = DATA_DIR / "bronze" / dataset_name
+        bronze_dir = settings.data_dir_path / "bronze" / dataset_name
 
         bronze_result = PipelineTransformer.to_bronze(
             landing_result=landing_result,
@@ -328,7 +328,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         result = PipelineValidator.validate_state_coherence(
             dataset_name=dataset_name,
             dataset=dataset,
-            data_dir=DATA_DIR,
+            data_dir=settings.data_dir_path,
         )
         return result.to_dict()
 
@@ -354,7 +354,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         # Deserialize typed result from XCom
         bronze_result = AirflowTaskAdapter.from_xcom_bronze(bronze_data)
 
-        silver_dir = DATA_DIR / "silver" / dataset_name
+        silver_dir = settings.data_dir_path / "silver" / dataset_name
 
         # Track start time for duration calculation
         start_time = datetime.now()
@@ -389,7 +389,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
                 if ti:
                     state = PipelineStateManager.load(dataset_name)
                     action_taken = PipelineDecisionEngine.infer_action_from_state(
-                        state, dataset, DATA_DIR
+                        state, dataset, settings.data_dir_path
                     )
             except Exception:
                 # Fallback to FIRST_RUN if context unavailable or state unreadable
@@ -529,11 +529,11 @@ def _generate_all_pipelines() -> dict[str, DAG]:
         If catalog fails to load, returns a single error DAG.
     """
     try:
-        catalog = DataCatalog.load(DATA_CATALOG_PATH)
+        catalog = DataCatalog.load(settings.data_catalog_file_path)
     except InvalidCatalogError as e:
         logger.exception(
             "Failed to load data catalog",
-            extra={"path": str(DATA_CATALOG_PATH), "errors": e.validation_errors},
+            extra={"path": str(settings.data_catalog_file_path), "errors": e.validation_errors},
         )
         return {"catalog_error": _create_error_dag("catalog_load_error", str(e))}
     except Exception as e:
