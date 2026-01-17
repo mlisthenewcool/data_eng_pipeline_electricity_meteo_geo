@@ -41,7 +41,8 @@ Voir [README_DX.md](docs/README_DX.md)
     * tests/test_downloader.py
     * notebooks/
 
-* passage à pydantic-settings
+[x] passage à pydantic-settings
+
 * déplacer data_catalog.yaml
 * modifier les raise ... from e
 * comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant la validation ?
@@ -52,18 +53,3 @@ Voir [README_DX.md](docs/README_DX.md)
 
 * ajouter configuration Open Lineage
     * https://airflow.apache.org/docs/apache-airflow-providers-openlineage/stable/guides/user.html
-
-
-* changer structure code python
-  src/de_projet_perso/
-  ├── core/ # ✅ Déjà bien organisé
-  ├── pipelines/ # 🆕 Logique métier des pipelines
-  │ ├── __init__.py
-  │ ├── base.py # BasePipeline abstrait
-  │ └── ign.py # IGNPipeline(BasePipeline)
-  ├── airflow_utils/ # 🆕 Utilitaires Airflow
-  │ ├── __init__.py
-  │ └── dag_factory.py # Générer DAGs depuis catalog
-  └── cli/ # 🆕 Scripts CLI
-  ├── __init__.py
-  └── inspect_catalog.py # Ancien ign_contours_iris.py

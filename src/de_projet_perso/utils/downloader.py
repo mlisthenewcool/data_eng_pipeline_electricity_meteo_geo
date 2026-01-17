@@ -36,13 +36,7 @@ from de_projet_perso.core.exceptions import (
     FileShouldNotExist,
 )
 from de_projet_perso.core.logger import _is_airflow_context, logger
-from de_projet_perso.core.settings import (
-    DATA_DIR,
-    DOWNLOAD_CHUNK_SIZE,
-    DOWNLOAD_TIMEOUT_CONNECT,
-    DOWNLOAD_TIMEOUT_SOCK_READ,
-    DOWNLOAD_TIMEOUT_TOTAL,
-)
+from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.results import DownloadResult
 from de_projet_perso.utils.hasher import FileHasher
 
@@ -157,11 +151,11 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
 
     logger.info("Starting download", extra={"url": url, "will_save_to": dest_path.name})
 
-    timeout = httpx.Timeout(
-        timeout=DOWNLOAD_TIMEOUT_TOTAL,
-        connect=DOWNLOAD_TIMEOUT_CONNECT,
-        read=DOWNLOAD_TIMEOUT_SOCK_READ,
-        # write
+    timeout = httpx.Timeout(  # TODO, documenter & ajouter arguments write/pool
+        timeout=settings.download_timeout_total,
+        connect=settings.download_timeout_connect,
+        read=settings.download_timeout_sock_read,
+        write=None,
         pool=None,
     )
 
@@ -188,7 +182,7 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
 
             try:
                 with open(dest_path, mode="wb") as f:
-                    for chunk in response.iter_bytes(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                    for chunk in response.iter_bytes(chunk_size=settings.download_chunk_size):
                         f.write(chunk)
                         hasher.update(chunk)
                         chunk_len = len(chunk)
@@ -370,8 +364,8 @@ def _test_download() -> None:
         "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01/"
         "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01.7z"
     )
-    archive_path = DATA_DIR / "landing" / "ADMIN-EXPRESS-COG.7z"
-    dest_path = DATA_DIR / "landing" / "admin_express_cog.gpkg"
+    archive_path = settings.data_dir_path / "landing" / "ADMIN-EXPRESS-COG.7z"
+    dest_path = settings.data_dir_path / "landing" / "admin_express_cog.gpkg"
 
     # Download
     try:

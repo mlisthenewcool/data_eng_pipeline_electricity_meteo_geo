@@ -1,19 +1,25 @@
-"""TODO."""
+"""File hashing utilities with memory-efficient streaming.
+
+Provides SHA256 (and other algorithms) hashing for files and byte streams,
+with configurable chunk sizes for memory efficiency.
+"""
 
 import hashlib
 from pathlib import Path
 
 from de_projet_perso.core.exceptions import FileIntegrityError
-from de_projet_perso.core.settings import DOWNLOAD_CHUNK_SIZE
-
-HASH_ALGORITHM = "sha256"
+from de_projet_perso.core.settings import settings
 
 
 class FileHasher:
     """Memory-efficient hashing for files and streams with integrity check."""
 
-    def __init__(self, algorithm: str = HASH_ALGORITHM):
-        """TODO."""
+    def __init__(self, algorithm: str = settings.hash_algorithm):
+        """Initialize hasher with specified algorithm.
+
+        Args:
+            algorithm: Hash algorithm name (default from settings)
+        """
         self._hasher = hashlib.new(algorithm)
         self.algorithm = algorithm
 
@@ -28,7 +34,10 @@ class FileHasher:
 
     @classmethod
     def hash_file(
-        cls, path: Path, algorithm: str = HASH_ALGORITHM, chunk_size: int = DOWNLOAD_CHUNK_SIZE
+        cls,
+        path: Path,
+        algorithm: str = settings.hash_algorithm,
+        chunk_size: int = settings.hash_chunk_size,
     ) -> str:
         """Hash an existing file using chunks to save RAM."""
         instance = cls(algorithm)
@@ -38,7 +47,9 @@ class FileHasher:
         return instance.hexdigest
 
     @classmethod
-    def verify(cls, path: Path, expected_hash: str, algorithm: str = HASH_ALGORITHM) -> None:
+    def verify(
+        cls, path: Path, expected_hash: str, algorithm: str = settings.hash_algorithm
+    ) -> None:
         """Verify file integrity. Raises FileIntegrityError if hashes don't match."""
         actual = cls.hash_file(path, algorithm)
         if actual.lower() != expected_hash.lower():
