@@ -49,6 +49,7 @@ class PipelineDecisionEngine:
             return PipelineAction.FIRST_RUN
 
         # 2. HEAL - Check if expected files exist
+        # TODO: bronze also ?
         expected_path = data_dir / dataset.get_storage_path("silver")
         if not expected_path.exists():
             logger.info(

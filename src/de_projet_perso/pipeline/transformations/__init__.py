@@ -14,7 +14,9 @@ from typing import Callable
 
 import polars as pl
 
-TransformFunction = Callable[[pl.DataFrame, str], pl.DataFrame]
+from de_projet_perso.core.data_catalog import Dataset
+
+TransformFunction = Callable[[Dataset], pl.DataFrame]
 
 # Private registries
 _BRONZE_TRANSFORMS: dict[str, TransformFunction] = {}

@@ -12,13 +12,11 @@ SHA256 Propagation:
 - Archive SHA256 is also propagated to track original source
 """
 
-from pathlib import Path
-
-import duckdb
 import polars as pl
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
+from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.results import BronzeResult, LandingResult, SilverResult
 from de_projet_perso.pipeline.transformations import get_bronze_transform, get_silver_transform
 
@@ -28,10 +26,7 @@ class PipelineTransformer:
 
     @staticmethod
     def to_bronze(
-        landing_result: LandingResult,
-        dataset_name: str,
-        dataset: Dataset,
-        bronze_dir: Path,
+        landing_result: LandingResult, dataset_name: str, dataset: Dataset
     ) -> BronzeResult:
         """Convert landing file to Parquet with normalized column names.
 
@@ -45,7 +40,6 @@ class PipelineTransformer:
             landing_result: Result from landing validation (contains file path and SHA256s)
             dataset_name: Dataset identifier
             dataset: Dataset configuration
-            bronze_dir: Bronze layer directory
 
         Returns:
             BronzeResult with bronze file info and propagated SHA256s
@@ -53,58 +47,31 @@ class PipelineTransformer:
         Raises:
             ValueError: If source format is unsupported
         """
-        bronze_dir.mkdir(parents=True, exist_ok=True)
-        bronze_path = bronze_dir / f"{dataset.ingestion.version}.parquet"
-
-        source_path = landing_result.path
+        landing_path = landing_result.path  # TODO: replace by get_storage_path
+        # settings.data_dir_path / dataset.get_storage_path("landing")
+        bronze_path = settings.data_dir_path / dataset.get_storage_path("bronze")
+        bronze_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
             f"Converting to bronze for {dataset_name}",
-            extra={"source": source_path.name, "dest": bronze_path.name},
+            extra={"source": landing_path, "dest": bronze_path},
         )
 
-        # Read based on format
-        if source_path.suffix == ".gpkg":
-            # GeoPackage needs special handling with DuckDB
+        # # Normalize column names to snake_case (always applied)
+        # df = df.rename(lambda col: col.lower().replace(" ", "_").replace("-", "_"))
 
-            conn = duckdb.connect()
-            conn.execute("INSTALL spatial; LOAD spatial;")
-            # ST_AsGeoJSON(geometrie) AS geom_json
-            # noinspection SqlResolve
-            query = """
-                SELECT
-                    * EXCLUDE (geometrie),
-                    ST_AsWKB(geometrie) AS geom_wkb
-                FROM st_read(?, layer = 'contours_iris')
-            """
-            logger.info("duckdb spatial query started")
-            df = conn.execute(query, parameters=[str(source_path)]).pl()
-            logger.info("duckdb spatial query ended")
-        elif source_path.suffix == ".parquet":
-            df = pl.read_parquet(source_path)
-        elif source_path.suffix == ".json":
-            df = pl.read_json(source_path)
-        else:
-            raise ValueError(f"Unsupported format: {source_path.suffix}")
-
-        # Normalize column names to snake_case (always applied)
-        df = df.rename(lambda col: col.lower().replace(" ", "_").replace("-", "_"))
-
-        # Apply dataset-specific bronze transformation if registered
-        custom_transform = get_bronze_transform(dataset_name)
-        if custom_transform:
-            logger.info(
-                f"Applying custom bronze transformation for {dataset_name}",
-                extra={"dataset": dataset_name},
-            )
-            df = custom_transform(df, dataset_name)
-        else:
-            logger.debug(
-                f"No custom bronze transformation for {dataset_name}",
-                extra={"dataset": dataset_name},
+        # Apply dataset-specific bronze transformation
+        transforms = get_bronze_transform(dataset_name)
+        if transforms is None:
+            raise NotImplementedError(
+                f"No bronze transformation registered for dataset: {dataset_name}"
             )
 
-        # Write to Parquet
+        logger.info(
+            f"Applying bronze transformations for {dataset_name}",
+            extra={"dataset": dataset},
+        )
+        df = transforms(dataset)
         df.write_parquet(bronze_path)
 
         columns = df.columns
@@ -128,7 +95,6 @@ class PipelineTransformer:
         bronze_result: BronzeResult,
         dataset_name: str,
         dataset: Dataset,
-        silver_dir: Path,
     ) -> SilverResult:
         """Apply business transformations to create silver layer.
 
@@ -141,47 +107,47 @@ class PipelineTransformer:
             bronze_result: Result from bronze transformation (contains file path and SHA256s)
             dataset_name: Dataset identifier
             dataset: Dataset configuration
-            silver_dir: Silver layer directory
 
         Returns:
             SilverResult with silver file info and propagated SHA256s
         """
-        silver_dir.mkdir(parents=True, exist_ok=True)
-        silver_path = silver_dir / f"{dataset.ingestion.version}.parquet"
-
-        bronze_path = bronze_result.path
+        silver_path = settings.data_dir_path / dataset.get_storage_path("silver")
+        silver_path.parent.mkdir(parents=True, exist_ok=True)
+        bronze_path = bronze_result.path  # TODO: replace
 
         logger.info(
             f"Transforming to silver for {dataset_name}",
             extra={"source": bronze_path.name},
         )
 
+        # Read bronze parquet file
         df = pl.read_parquet(bronze_path)
 
-        custom_transform = get_silver_transform(dataset_name)
-        if custom_transform:
-            logger.info(
-                f"Applying custom silver transformation for {dataset_name}",
-                extra={"dataset": dataset_name},
+        # Apply dataset-specific silver transformation
+        transforms = get_silver_transform(dataset_name)
+        if transforms is None:
+            raise NotImplementedError(
+                f"No silver transformation registered for dataset: {dataset_name}"
             )
-            df = custom_transform(df, dataset_name)
-        else:
-            logger.debug(
-                f"No custom silver transformation for {dataset_name}, using default (no-op)",
-                extra={"dataset": dataset_name},
-            )
-            # Default: no transformation, just pass through
 
+        logger.info(
+            f"Applying custom silver transformation for {dataset_name}",
+            extra={"dataset": dataset_name},
+        )
+        df = transforms(dataset)
         df.write_parquet(silver_path)
+
+        columns = df.columns
+        row_count = len(df)
 
         logger.info(
             f"Silver transformation complete for {dataset_name}",
-            extra={"path": str(silver_path), "rows": len(df)},
+            extra={"rows": row_count, "columns": len(columns)},
         )
 
         return SilverResult(
             path=silver_path,
-            row_count=len(df),
+            row_count=row_count,
             columns=df.columns,
             sha256=bronze_result.sha256,  # Propagate from bronze (= landing SHA256)
             archive_sha256=bronze_result.archive_sha256,  # Propagate archive SHA256

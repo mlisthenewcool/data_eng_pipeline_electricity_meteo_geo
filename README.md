@@ -16,7 +16,7 @@ Objectif : pipeline de données énergétiques, météorologiques et géographiq
 
 Voir [README_DATA.md](docs/README_DATA.md)
 
-Architecture des données : Médaillon
+### Architecture des données : Médaillon
 
 - Landing
     - Données brutes téléchargées
@@ -33,6 +33,30 @@ Architecture des données : Médaillon
 - Gold
     - Données enrichies et agrégées entre datasets
     - Prêtes pour analyse/visualisation
+
+### Logique du pipeline par dataset
+
+```
+decide_action (branch)
+    ├── mark_skipped (si action = SKIP) ✅ affiche raison détaillée
+    └── validate_state_coherence (branch) ✅ fusionne log_state_summary + validation
+            ├── cleanup_incoherent_state → download_data (si état incohérent) ✅
+            └── download_data (si état cohérent) ✅
+                    └── check_extraction_needed (branch) ✅
+                            ├── extract_archive (si is_archive) ✅ cleanup .7z + validation
+                            └── skip_extraction (si pas archive) ✅ validation directe
+                                    └── convert_to_bronze ✅
+                                            └── transform_to_silver (émet Metadata enrichies) ✅
+```
+
+**Améliorations implémentées:**
+- ✅ Raison détaillée du skip (action + timestamp + age vs frequency)
+- ✅ Fusion de log_state_summary dans validate_state_coherence
+- ✅ Branchement automatique pour cleanup si état incohérent
+- ✅ Branchement conditionnel pour extraction (basé sur `dataset.source.format.is_archive`)
+- ✅ Nettoyage automatique des archives .7z après extraction réussie
+- ✅ Suppression de save_to_landing (validation intégrée dans extract/skip)
+- ✅ Trigger rules pour gérer les chemins multiples (download, convert_to_bronze)
 
 ## Développement
 

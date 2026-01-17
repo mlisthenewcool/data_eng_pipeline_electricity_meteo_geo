@@ -40,32 +40,6 @@ from de_projet_perso.pipeline.results import DownloadResult
 from de_projet_perso.utils.hasher import FileHasher
 
 
-@dataclass(frozen=True)
-class ExtractionInfo:
-    """Information about a file extracted from an archive.
-
-    This is a low-level utility data structure containing only
-    information about the extracted file itself, without metadata
-    from the extraction context (archive hash, download info, etc.).
-
-    For pipeline orchestration with full traceability, use ExtractionResult
-    from de_projet_perso.pipeline.results instead.
-
-    Attributes:
-        path: Path to the extracted file
-        size_mib: File size in mebibytes
-        sha256: SHA256 hash of the extracted file content
-
-    Example:
-        file_info = extract_7z(archive_path, "data.gpkg", dest_path)
-        print(f"Extracted {file_info.path}: {file_info.sha256}")
-    """
-
-    path: Path
-    size_mib: float
-    sha256: str
-
-
 class TqdmExtractCallback(ExtractCallback):
     """Bridge between py7zr extraction and tqdm progress bar."""
 
@@ -207,6 +181,32 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
 # =============================================================================
 # Archive extraction
 # =============================================================================
+
+
+@dataclass(frozen=True)
+class ExtractionInfo:
+    """Information about a file extracted from an archive.
+
+    This is a low-level utility data structure containing only
+    information about the extracted file itself, without metadata
+    from the extraction context (archive hash, download info, etc.).
+
+    For pipeline orchestration with full traceability, use ExtractionResult
+    from de_projet_perso.pipeline.results instead.
+
+    Attributes:
+        path: Path to the extracted file
+        size_mib: File size in mebibytes
+        sha256: SHA256 hash of the extracted file content
+
+    Example:
+        file_info = extract_7z(archive_path, "data.gpkg", dest_path)
+        print(f"Extracted {file_info.path}: {file_info.sha256}")
+    """
+
+    path: Path
+    size_mib: float
+    sha256: str
 
 
 def validate_sqlite_header(path: Path) -> None:

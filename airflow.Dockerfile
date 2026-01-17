@@ -24,7 +24,7 @@ RUN uv python upgrade
 # NOTE: use psycopg with system tools instead of binary ?
 # NOTE: use `--mount=type=cache` instead of --no-cache ?
 RUN uv pip install --no-cache \
-    aiofiles aiohttp duckdb loguru polars "psycopg[binary]" py7zr pydantic \
+    duckdb "httpx[http2]" loguru polars "psycopg[binary]" py7zr pydantic pydantic-settings \
     python-json-logger pyyaml tqdm
 
 # Use with caution, might break things ?

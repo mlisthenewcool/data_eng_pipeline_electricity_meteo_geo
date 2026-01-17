@@ -14,6 +14,7 @@ from pathlib import Path
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
+from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.results import DownloadResult, ExtractionResult, LandingResult
 from de_projet_perso.utils.downloader import (
     download_to_file,
@@ -25,26 +26,22 @@ class PipelineDownloader:
     """Download and extraction logic for pipeline data sources."""
 
     @staticmethod
-    def download(
-        dataset_name: str,
-        dataset: Dataset,
-        dest_dir: Path,
-    ) -> DownloadResult:
+    def download(dataset_name: str, dataset: Dataset) -> DownloadResult:
         """Download source file from URL.
 
         Args:
             dataset_name: Dataset identifier
             dataset: Dataset configuration
-            dest_dir: Destination directory (typically landing/{dataset_name})
 
         Returns:
             DownloadResult with path, sha256, and size
         """
         logger.info(f"Downloading {dataset_name}", extra={"url": str(dataset.source.url)})
 
-        # Ensure destination directory exists
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_dir / Path(dataset.source.url_as_str).name
+        dest_path = settings.data_dir_path / dataset.get_storage_path("landing")
+
+        # NOTE: Ensure destination directory exists ? Do we really need this ?
+        # dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         return download_to_file(
             url=dataset.source.url_as_str,
@@ -53,10 +50,7 @@ class PipelineDownloader:
 
     @staticmethod
     def extract_archive(
-        archive_path: Path,
-        dataset: Dataset,
-        dest_dir: Path,
-        archive_sha256: str,
+        archive_path: Path, dataset: Dataset, archive_sha256: str
     ) -> ExtractionResult:
         """Extract archive if format requires it and recalculate SHA256.
 
@@ -72,7 +66,6 @@ class PipelineDownloader:
         Args:
             archive_path: Path to archive file (or direct file if not archive)
             dataset: Dataset configuration
-            dest_dir: Destination directory for extraction
             archive_sha256: SHA256 of the downloaded archive (propagated from download)
 
         Returns:
@@ -100,7 +93,11 @@ class PipelineDownloader:
         if dataset.source.inner_file is None:
             raise ValueError(f"inner_file required for archive format: {dataset.source.format}")
 
-        dest_path = dest_dir / dataset.source.inner_file
+        # TODO: improve that logic
+        special_landing_storage_for_extraction = (
+            str(dataset.get_storage_path("landing")).split(".")[0] + ".gpkg"
+        )
+        dest_path = settings.data_dir_path / special_landing_storage_for_extraction
 
         logger.info(
             "Extracting archive",
@@ -119,7 +116,7 @@ class PipelineDownloader:
         logger.info(
             "Extraction completed with integrity check",
             extra={
-                "extracted_file": dest_path.name,
+                "extracted_file": file_info.path,
                 "size_mib": file_info.size_mib,
                 "extracted_sha256": file_info.sha256,
                 "archive_sha256": archive_sha256,
