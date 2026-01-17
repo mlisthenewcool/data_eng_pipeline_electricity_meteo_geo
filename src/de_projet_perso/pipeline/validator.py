@@ -6,8 +6,8 @@ This module validates that pipeline state files are coherent with reality on dis
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.datacatalog import Dataset
 from de_projet_perso.pipeline.state import PipelineStateManager
 
 

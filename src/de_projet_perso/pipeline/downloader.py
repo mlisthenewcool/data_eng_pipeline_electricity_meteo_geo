@@ -12,8 +12,8 @@ Key features:
 
 from pathlib import Path
 
+from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.datacatalog import Dataset
 from de_projet_perso.pipeline.results import DownloadResult, ExtractionResult, LandingResult
 from de_projet_perso.utils.downloader import (
     download_to_file,

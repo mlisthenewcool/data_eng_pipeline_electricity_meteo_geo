@@ -7,8 +7,8 @@ based on state, completely decoupled from Airflow orchestration.
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.datacatalog import Dataset
 from de_projet_perso.pipeline.state import PipelineAction, PipelineState, PipelineStateManager
 
 

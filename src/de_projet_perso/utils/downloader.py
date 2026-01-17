@@ -35,7 +35,7 @@ from de_projet_perso.core.exceptions import (
     FileNotFoundInArchiveError,
     FileShouldNotExist,
 )
-from de_projet_perso.core.logger import _is_airflow_context, logger
+from de_projet_perso.core.logger import logger
 from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.results import DownloadResult
 from de_projet_perso.utils.hasher import FileHasher
@@ -176,7 +176,7 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
                 unit_scale=True,
                 unit_divisor=1024,
                 desc=f"Downloading {dest_path.name}",
-                file=TqdmToLoguru(logger.info) if _is_airflow_context() else sys.stderr,
+                file=TqdmToLoguru(logger.info) if settings.is_running_on_airflow else sys.stderr,
                 leave=False,
             )
 
@@ -306,8 +306,8 @@ def extract_7z(
                 unit_scale=True,
                 desc=f"Extracting {target_filename}",
                 leave=False,
-                file=TqdmToLoguru(logger.info) if _is_airflow_context() else sys.stderr,
-                mininterval=5.0 if _is_airflow_context() else 1.0,
+                file=TqdmToLoguru(logger.info) if settings.is_running_on_airflow else sys.stderr,
+                mininterval=5.0 if settings.is_running_on_airflow else 1.0,
             ) as pbar:
                 # Le callback reçoit le nombre d'octets écrits durant l'intervale
                 extraction_callback = TqdmExtractCallback(pbar)

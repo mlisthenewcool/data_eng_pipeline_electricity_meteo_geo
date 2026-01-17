@@ -26,10 +26,10 @@ from typing import TYPE_CHECKING, Any
 from airflow.sdk import DAG, Asset, Metadata, dag, task
 
 from de_projet_perso.airflow.adapters import AirflowTaskAdapter
+from de_projet_perso.core.data_catalog import DataCatalog, Dataset
 from de_projet_perso.core.exceptions import InvalidCatalogError
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.settings import settings
-from de_projet_perso.datacatalog import DataCatalog, Dataset
 from de_projet_perso.pipeline.decision import PipelineDecisionEngine
 from de_projet_perso.pipeline.downloader import PipelineDownloader
 from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager

@@ -17,8 +17,8 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
+from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.datacatalog import Dataset
 from de_projet_perso.pipeline.results import BronzeResult, LandingResult, SilverResult
 from de_projet_perso.pipeline.transformations import get_bronze_transform, get_silver_transform
 

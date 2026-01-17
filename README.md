@@ -36,9 +36,9 @@ Voir [README_DX.md](docs/README_DX.md)
 
 ## TODO
 
-- [x] passage à pydantic-settings
 - [x] déplacer data_catalog.yaml dans dossier data et modifier le build Docker
-    - [ ] voir les TODO de mise en prod dans le docker-compose.yaml
+    - [ ] TODO de mise en prod dans le docker-compose.yaml
+- [x] passage à pydantic-settings
 - [ ] modifier les raise ... from e
 - [ ] comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant le parsing
   des DAGS ?

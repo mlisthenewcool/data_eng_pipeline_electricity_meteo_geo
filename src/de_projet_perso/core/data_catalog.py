@@ -564,3 +564,30 @@ class DataCatalog(StrictModel):
             raise DatasetNotFoundError(name=name, available_datasets=list(self.datasets.keys()))
 
         return dataset
+
+
+if __name__ == "__main__":
+    import sys
+
+    from de_projet_perso.core.logger import logger
+    from de_projet_perso.core.settings import settings
+
+    try:
+        _catalog = DataCatalog.load(settings.data_catalog_file_path)
+    except InvalidCatalogError as e:
+        logger.exception(message=str(e), extra=e.validation_errors)
+        sys.exit(1)
+
+    logger.info(message=f"Catalog loaded: found {len(_catalog.datasets)} dataset(s)")
+
+    for _name, _dataset in _catalog.datasets.items():
+        logger.info(
+            message=f"dataset: {_name}",
+            # extra=_dataset.model_dump(),
+            extra={
+                "provider": _dataset.source.provider,
+                "version": _dataset.ingestion.version,
+                "format": _dataset.source.format.value,
+                "storage (landing)": _dataset.get_storage_path(layer="landing"),
+            },
+        )

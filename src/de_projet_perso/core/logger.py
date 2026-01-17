@@ -29,36 +29,16 @@ Attributes:
 """
 
 import logging
-import os
 import re
 import sys
-from functools import cache
 from typing import TYPE_CHECKING, Any, Pattern, Self, TypeGuard
 
 from loguru import logger as _loguru_logger
 
+from de_projet_perso.core.settings import settings
+
 if TYPE_CHECKING:
-    from loguru import Message, Record
-
-
-# TODO: Move to settings. LOG_LEVEL should be defined via Docker for consistency.
-# TODO: Consider moving AIRFLOW_LOGGER_NAME to settings as well.
-_AIRFLOW_LOGGER_NAME = "MY_LOGGER"
-_LOG_LEVEL = "INFO"
-
-
-@cache
-def _is_airflow_context() -> bool:
-    """Detect if running inside an Airflow environment.
-
-    Checks for the presence of ``airflow.cfg`` in the Airflow home directory.
-    Result is cached for performance since environment doesn't change at runtime.
-
-    Returns:
-        True if running inside Airflow, False otherwise.
-    """
-    airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
-    return os.path.exists(os.path.join(airflow_home, "airflow.cfg"))
+    from loguru import Logger, Message, Record
 
 
 def _should_use_colors() -> bool:
@@ -71,7 +51,7 @@ def _should_use_colors() -> bool:
     Returns:
         True if the environment supports and expects colored output, False otherwise.
     """
-    if _is_airflow_context():
+    if settings.is_running_on_airflow:
         return False
     return sys.stderr.isatty()
 
@@ -153,7 +133,7 @@ def _format_extra(record: "Record") -> None:
         return
 
     # indent sizes are based on both Airflow UI prefix & standard terminal format
-    if _is_airflow_context():
+    if settings.is_running_on_airflow:
         indent = " " * 22
         prefix = f"\n{indent}└─ "
         parts: list[str] = [f"{_safe_str(k)} => {_safe_str(v)}" for k, v in extra.items()]
@@ -180,7 +160,7 @@ def _airflow_sink(message: "Message") -> None:
     record = message.record
     level_name = record["level"].name
     level_no = logging.getLevelName(level=level_name)
-    logging.getLogger(name=_AIRFLOW_LOGGER_NAME).log(level=level_no, msg=message.strip())
+    logging.getLogger(name=settings.airflow_logger_name).log(level=level_no, msg=message.strip())
 
     # # 2. Capture des extras pour XCom (Nouveauté)
     # # On ne pousse en XCom que si on est dans Airflow et que c'est une INFO/ERROR avec extras
@@ -225,6 +205,7 @@ class LoguruLogger:
     """
 
     _instance: Self | None = None
+    _logger: "Logger"
 
     def __new__(cls, level: str) -> Self:
         """Return the singleton instance, creating it on first call.
@@ -252,7 +233,7 @@ class LoguruLogger:
         _loguru_logger.remove()
         patched = _loguru_logger.patch(_format_extra)
 
-        if _is_airflow_context():
+        if settings.is_running_on_airflow:
             patched.add(
                 _airflow_sink,
                 level=level,
@@ -368,10 +349,10 @@ class LoguruLogger:
         cls._instance = None
 
 
-logger = LoguruLogger(level=_LOG_LEVEL)
+logger = LoguruLogger(level=settings.logging_level)
 
 
-def _test_logs_visually() -> None:  # pragma: no cover
+def __test_logs_visually() -> None:  # pragma: no cover
     """Visual test for logger output across all levels and edge cases.
 
     Run with: ``PYTHONPATH=src uv run python -m de_projet_perso.core.logger``
@@ -400,4 +381,4 @@ def _test_logs_visually() -> None:  # pragma: no cover
 
 
 if __name__ == "__main__":
-    _test_logs_visually()
+    __test_logs_visually()
