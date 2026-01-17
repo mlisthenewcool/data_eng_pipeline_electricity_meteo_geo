@@ -41,8 +41,6 @@ from typing import Self
 
 import yaml
 from pydantic import (
-    BaseModel,
-    ConfigDict,
     HttpUrl,
     ValidationError,
     field_validator,
@@ -50,22 +48,13 @@ from pydantic import (
 )
 
 from de_projet_perso.core.exceptions import DatasetNotFoundError, InvalidCatalogError
+from de_projet_perso.core.models import StrictModel
 
 # Compiled regex for version validation (performance optimization)
 _VERSION_PATTERN = re.compile(r"\d{4}_\d{2}_\d{2}")
 
 # Valid medallion architecture layers
 VALID_LAYERS = frozenset({"landing", "bronze", "silver", "gold"})
-
-
-class StrictModel(BaseModel):
-    """Base Pydantic model that forbids extra fields.
-
-    This model enforces strict validation by rejecting any fields not
-    explicitly defined in the schema, preventing typos and configuration drift.
-    """
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class SourceFormat(StrEnum):

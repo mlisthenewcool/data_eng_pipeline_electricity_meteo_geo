@@ -10,12 +10,12 @@ Airflow handles retries at the task level, so no retry logic is included here.
 
 Example:
     # Download a file
-    result = download_to_file(url, dest_path)
-    print(f"Downloaded {result.size_mib} MiB, SHA256: {result.sha256}")
+    >>> result = download_to_file(url, dest_path)
+    ... print(f"Downloaded {result.size_mib} MiB, SHA256: {result.sha256}")
 
     # Extract from archive (low-level utility)
-    file_info = extract_7z(archive_path, "data.gpkg", output_path)
-    print(f"Extracted: {file_info.path}, SHA256: {file_info.sha256}")
+    >>> file_info = extract_7z(archive_path, "data.gpkg", output_path)
+    ... print(f"Extracted: {file_info.path}, SHA256: {file_info.sha256}")
 """
 
 import shutil
@@ -33,7 +33,6 @@ from de_projet_perso.core.exceptions import (
     ArchiveNotFoundError,
     FileIntegrityError,
     FileNotFoundInArchiveError,
-    FileShouldNotExist,
 )
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.settings import settings
@@ -169,7 +168,6 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
 
             hasher = FileHasher()
 
-            # Progress bar (disappears when complete cause leave=False)
             progress_bar = tqdm(
                 total=total_size,
                 unit="iB",
@@ -177,7 +175,8 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
                 unit_divisor=1024,
                 desc=f"Downloading {dest_path.name}",
                 file=TqdmToLoguru(logger.info) if settings.is_running_on_airflow else sys.stderr,
-                leave=False,
+                leave=False,  # disappears when complete
+                # dynamic_ncols=True,
             )
 
             try:
@@ -308,8 +307,9 @@ def extract_7z(
                 leave=False,
                 file=TqdmToLoguru(logger.info) if settings.is_running_on_airflow else sys.stderr,
                 mininterval=5.0 if settings.is_running_on_airflow else 1.0,
+                # dynamic_ncols=True,
             ) as pbar:
-                # Le callback reçoit le nombre d'octets écrits durant l'intervale
+                # Le callback reçoit le nombre d'octets écrits durant l'intervalle
                 extraction_callback = TqdmExtractCallback(pbar)
 
                 archive.extract(
@@ -362,7 +362,7 @@ def _test_download() -> None:
     url = (
         "https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/"
         "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01/"
-        "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01.7z"
+        "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01.7"
     )
     archive_path = settings.data_dir_path / "landing" / "ADMIN-EXPRESS-COG.7z"
     dest_path = settings.data_dir_path / "landing" / "admin_express_cog.gpkg"
@@ -377,8 +377,24 @@ def _test_download() -> None:
                 "size_mib": download_result.size_mib,
             },
         )
-    except FileShouldNotExist as e:
-        logger.error("Download failed", extra={"error": str(e)})
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            f"Download failed. Server returned code: {e.response.status_code}",
+            extra={
+                "message": e.response.reason_phrase,
+                "url": str(e.request.url),
+            },
+        )
+        sys.exit(-1)
+    except httpx.TimeoutException as e:
+        logger.error("Download failed. Connection timed out", extra={"more_infos": e})
+        sys.exit(-1)
+    except httpx.HTTPError as e:
+        logger.error("Download failed. Network or request error", extra={"more_infos": e})
+        sys.exit(-1)
+    except Exception as e:
+        # TODO, simuler disque plein ?
+        logger.critical("Download failed. Unexpected error", extra={"more_infos": str(e)})
         sys.exit(-1)
 
     # Extract
@@ -400,7 +416,6 @@ def _test_download() -> None:
         ArchiveNotFoundError,
         FileNotFoundInArchiveError,
         FileIntegrityError,
-        FileShouldNotExist,
     ) as e:
         logger.error("Extraction failed", extra={"error": str(e)})
         sys.exit(-1)

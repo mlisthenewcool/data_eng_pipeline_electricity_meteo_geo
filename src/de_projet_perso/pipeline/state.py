@@ -35,7 +35,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from de_projet_perso.core.data_catalog import StrictModel
+from de_projet_perso.core.models import StrictModel
 from de_projet_perso.core.settings import settings
 
 

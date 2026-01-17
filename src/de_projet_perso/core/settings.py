@@ -9,13 +9,13 @@ Key Environment Variables:
     ENV_AIRFLOW_LOGGER_NAME: Logger name for Airflow UI (Default: MY_LOGGER)
     AIRFLOW_HOME: Standard Airflow path (No 'ENV_' prefix. Default: /opt/airflow)
 
-    ENV_DOWNLOAD_CHUNK_SIZE: Streaming download chunk size (Default: 1048576)
+    ENV_DOWNLOAD_CHUNK_SIZE: Streaming download chunk size (Default: 1024 * 1024)
     ENV_DOWNLOAD_TIMEOUT_TOTAL: Total download timeout (Default: 600)
     ENV_DOWNLOAD_TIMEOUT_CONNECT: Connection timeout in seconds (default: 10)
     ENV_DOWNLOAD_TIMEOUT_SOCK_READ: Socket read timeout in seconds (default: 30)
 
     ENV_HASH_ALGORITHM: Hashing algorithm (Default: sha256)
-    ENV_HASH_CHUNK_SIZE: Chunk size for file hashing (Default: 131072)
+    ENV_HASH_CHUNK_SIZE: Chunk size for file hashing (Default: 1024 * 128)
 
 Example:
     >>> from de_projet_perso.core.settings import settings
@@ -47,20 +47,20 @@ class Settings(BaseSettings):
     # =========================================================================
     # TODO: LOG_LEVEL should be defined via Docker for consistency.
     logging_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-        default="INFO", description="The logger verbosity level."
+        default="INFO", description="The logger verbosity level"
     )
 
     # =========================================================================
     # Airflow config
     # =========================================================================
     airflow_logger_name: str = Field(
-        default="MY_LOGGER", description="The logger name displayed in Airflow interface."
+        default="MY_LOGGER", description="The logger name displayed in Airflow interface"
     )
 
     airflow_home: Path = Field(
         default=Path("/opt/airflow"),
         validation_alias="AIRFLOW_HOME",  # the variable doesn't have the ENV prefix
-        description="The Airflow home directory. Uses standard AIRFLOW_HOME env var.",
+        description="The Airflow home directory. Uses standard AIRFLOW_HOME env var",
     )
 
     @computed_field
@@ -101,28 +101,28 @@ class Settings(BaseSettings):
     # =========================================================================
     download_chunk_size: int = Field(
         default=1024 * 1024,  # 1 MB
-        description="Chunk size for streaming downloads (bytes).",
+        description="Chunk size for streaming downloads (bytes)",
         gt=0,
         le=10 * 1024 * 1024,  # Max 10 MB
     )
 
     download_timeout_total: int = Field(
         default=600,
-        description="Maximum time for entire download (seconds).",
+        description="Maximum time for entire download (seconds)",
         gt=0,
         le=3600,  # Max 1 hour
     )
 
     download_timeout_connect: int = Field(
         default=10,
-        description="Maximum time to establish connection (seconds).",
+        description="Maximum time to establish connection (seconds)",
         gt=0,
         le=60,
     )
 
     download_timeout_sock_read: int = Field(
         default=30,
-        description="Maximum time between data packets (seconds).",
+        description="Maximum time between data packets (seconds)",
         gt=0,
         le=300,
     )
@@ -156,11 +156,11 @@ class Settings(BaseSettings):
     # =========================================================================
     hash_algorithm: Literal["sha256", "sha512", "sha1", "md5"] = Field(
         default="sha256",
-        description="Hashing algorithm for integrity checks (recommended: sha256).",
+        description="Hashing algorithm for integrity checks (recommended: sha256)",
     )
 
     hash_chunk_size: int = Field(
-        default=131072,  # 128 KB
+        default=1024 * 128,  # 128 KB
         description="Chunk size for file hashing (bytes)",
         gt=0,
         le=1024 * 1024,  # Max 1 MB
