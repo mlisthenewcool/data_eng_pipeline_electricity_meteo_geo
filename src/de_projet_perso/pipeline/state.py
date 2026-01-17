@@ -33,16 +33,16 @@ When to reconsider this approach:
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel
-
-from de_projet_perso.core.settings import DATA_DIR
+from de_projet_perso.core.settings import DATA_STATE_PATH
+from de_projet_perso.datacatalog import StrictModel
 
 
 class PipelineAction(StrEnum):
     """Actions possibles pour un pipeline."""
 
-    FORCE = "force"  # Première exécution (pas de state)
+    FIRST_RUN = "first_run"  # Première exécution (pas de state)
     HEAL = "heal"  # Fichier manquant sur disque
     RETRY = "retry"  # Dernière exécution a échoué
     REFRESH = "refresh"  # Données périmées (fréquence + vérification source)
@@ -59,10 +59,10 @@ class Stage(StrEnum):
     SILVER = "silver"
 
 
-class StageStatus(BaseModel):
+class StageStatus(StrictModel):
     """Statut d'une étape du pipeline."""
 
-    status: str  # success, failed, pending
+    status: Literal["success", "failed", "pending"]
     duration_seconds: float | None = None
     timestamp: datetime | None = None
     path: str | None = None
@@ -75,7 +75,7 @@ class StageStatus(BaseModel):
     columns: list[str] | None = None
 
 
-class RunRecord(BaseModel):
+class RunRecord(StrictModel):
     """Enregistrement d'une exécution réussie."""
 
     timestamp: datetime
@@ -85,7 +85,7 @@ class RunRecord(BaseModel):
     stages: dict[str, StageStatus]
 
 
-class FailedRunRecord(BaseModel):
+class FailedRunRecord(StrictModel):
     """Enregistrement d'une exécution échouée."""
 
     timestamp: datetime
@@ -95,7 +95,7 @@ class FailedRunRecord(BaseModel):
     traceback: str | None = None
 
 
-class PipelineState(BaseModel):
+class PipelineState(StrictModel):
     """État complet d'un pipeline."""
 
     dataset_name: str
@@ -105,13 +105,13 @@ class PipelineState(BaseModel):
     history: list[dict] = []
 
 
-class StateManager:
+class PipelineStateManager:
     """Gestion de la persistance de l'état."""
 
-    @staticmethod
-    def get_state_path(dataset_name: str) -> Path:
+    @classmethod
+    def get_state_path(cls, dataset_name: str) -> Path:
         """Retourne le chemin du fichier state."""
-        return DATA_DIR / "_state" / f"{dataset_name}.json"
+        return DATA_STATE_PATH / f"{dataset_name}.json"
 
     @classmethod
     def load(cls, dataset_name: str) -> PipelineState | None:
@@ -132,3 +132,46 @@ class StateManager:
         path = cls.get_state_path(state.dataset_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(state.model_dump_json(indent=2))
+
+    @classmethod
+    def update_success(  # noqa: PLR0913
+        cls,
+        dataset_name: str,
+        version: str,
+        silver_path: Path,
+        row_count: int,
+        columns: list[str],
+        sha256: str,
+    ) -> None:
+        """Update pipeline state after successful run.
+
+        Args:
+            dataset_name: Dataset identifier
+            version: Dataset version
+            silver_path: Path to silver layer file
+            row_count: Number of rows in dataset
+            columns: List of column names
+            sha256: SHA256 hash of source file
+        """
+        state = cls.load(dataset_name)
+        if state is None:
+            state = cls.create_new(dataset_name, version)
+
+        state.last_successful_run = RunRecord(
+            timestamp=datetime.now(),
+            run_id=f"{dataset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            version=version,
+            duration_seconds=0,  # Would need to track actual duration
+            stages={
+                "silver": StageStatus(
+                    status="success",
+                    timestamp=datetime.now(),
+                    path=str(silver_path),
+                    row_count=row_count,
+                    columns=columns,
+                    sha256=sha256,
+                )
+            },
+        )
+
+        cls.save(state)

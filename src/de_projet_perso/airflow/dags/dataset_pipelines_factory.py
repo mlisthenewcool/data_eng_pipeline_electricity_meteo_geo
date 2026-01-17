@@ -21,16 +21,20 @@ from __future__ import annotations
 
 import traceback
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from airflow.sdk import DAG, Asset, Metadata, dag, task
 
-from de_projet_perso.core.catalog import DataCatalog, Dataset
+from de_projet_perso.airflow.adapters import AirflowTaskAdapter
 from de_projet_perso.core.exceptions import InvalidCatalogError
 from de_projet_perso.core.logger import logger
-from de_projet_perso.core.pipeline_state import PipelineAction, StateManager
 from de_projet_perso.core.settings import DATA_CATALOG_PATH, DATA_DIR
+from de_projet_perso.datacatalog import DataCatalog, Dataset
+from de_projet_perso.pipeline.decision import PipelineDecisionEngine
+from de_projet_perso.pipeline.downloader import PipelineDownloader
+from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
+from de_projet_perso.pipeline.transformer import PipelineTransformer
+from de_projet_perso.pipeline.validator import PipelineValidator
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -57,99 +61,9 @@ TRANSFORM_TIMEOUT = timedelta(minutes=45)
 
 
 # =============================================================================
-# Action Decision Logic
+# Action Decision Logic - Now delegated to PipelineDecisionEngine
 # =============================================================================
-
-
-def decide_pipeline_action(dataset_name: str, dataset: Dataset) -> PipelineAction:
-    """Determine which action to take based on pipeline state.
-
-    Priority order:
-    1. FORCE - First run (no state file)
-    2. HEAL - File missing from disk
-    3. RETRY - Previous run failed
-    4. REFRESH - Data is stale based on frequency
-    5. SKIP - Everything is up to date
-
-    Args:
-        dataset_name: Dataset identifier
-        dataset: Dataset configuration
-
-    Returns:
-        PipelineAction enum value
-    """
-    state = StateManager.load(dataset_name)
-
-    # 1. FORCE - No state means first run
-    if state is None:
-        logger.info(
-            "No state found, forcing execution",
-            extra={"dataset": dataset_name, "action": PipelineAction.FORCE},
-        )
-        return PipelineAction.FORCE
-
-    # 2. HEAL - Check if expected files exist
-    expected_path = DATA_DIR / dataset.get_storage_path()
-    if not expected_path.exists():
-        logger.info(
-            "Expected file missing, healing",
-            extra={
-                "dataset": dataset_name,
-                "path": str(expected_path),
-                "action": PipelineAction.HEAL,
-            },
-        )
-        return PipelineAction.HEAL
-
-    # 3. RETRY - Last run failed
-    if state.last_failed_run is not None:
-        if state.last_successful_run is None or (
-            state.last_failed_run.timestamp > state.last_successful_run.timestamp
-        ):
-            logger.info(
-                "Last run failed, retrying",
-                extra={
-                    "dataset": dataset_name,
-                    "failed_at": state.last_failed_run.timestamp.isoformat(),
-                    "action": PipelineAction.RETRY,
-                },
-            )
-            return PipelineAction.RETRY
-
-    # 4. REFRESH - Check if data is stale based on frequency
-    if state.last_successful_run is not None:
-        frequency_delta = _frequency_to_timedelta(dataset.ingestion.frequency)
-        if frequency_delta is not None:
-            age = datetime.now() - state.last_successful_run.timestamp
-            if age > frequency_delta:
-                logger.info(
-                    "Data is stale, refreshing",
-                    extra={
-                        "dataset": dataset_name,
-                        "age_hours": round(age.total_seconds() / 3600, 1),
-                        "action": PipelineAction.REFRESH,
-                    },
-                )
-                return PipelineAction.REFRESH
-
-    # 5. SKIP - All good
-    logger.info(
-        "Data is up to date",
-        extra={"dataset": dataset_name, "action": PipelineAction.SKIP},
-    )
-    return PipelineAction.SKIP
-
-
-def _frequency_to_timedelta(frequency: str) -> timedelta | None:
-    """Convert ingestion frequency to timedelta for staleness check."""
-    mapping = {
-        "hourly": timedelta(hours=1),
-        "daily": timedelta(days=1),
-        "weekly": timedelta(weeks=1),
-        "monthly": timedelta(days=30),
-        "yearly": timedelta(days=365),
-    }
-    return mapping.get(str(frequency))
+# Functions moved to de_projet_perso.pipeline.decision module for better separation
 
 
 # =============================================================================
@@ -205,7 +119,7 @@ def _create_asset_for_dataset(name: str, dataset: Dataset) -> Asset:
     """
     return Asset(
         name=f"{name}_silver",
-        uri=f"file:///{DATA_DIR / dataset.get_storage_path()}",
+        uri=f"file:///{DATA_DIR / dataset.get_storage_path('silver')}",
         group="data-pipeline",
         extra={
             "provider": dataset.source.provider,
@@ -243,7 +157,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
 
         Returns task_id of next task to execute.
         """
-        action = decide_pipeline_action(dataset_name, dataset)
+        action = PipelineDecisionEngine.decide_action(dataset_name, dataset, DATA_DIR)
 
         if action == PipelineAction.SKIP:
             return "mark_skipped"
@@ -267,11 +181,11 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         Returns:
             Dict with state summary information
         """
-        state = StateManager.load(dataset_name)
+        state = PipelineStateManager.load(dataset_name)
         if state is None:
             summary = {
                 "status": "no_state",
-                "action": "FORCE",
+                "action": PipelineAction.FIRST_RUN.value,
                 "dataset": dataset_name,
             }
             logger.info("No state found - first run", extra=summary)
@@ -289,7 +203,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
             ),
             "current_version": state.current_version,
             "history_count": len(state.history),
-            "state_file": str(StateManager.get_state_path(dataset_name)),
+            "state_file": str(PipelineStateManager.get_state_path(dataset_name)),
         }
 
         logger.info("Pipeline state summary", extra=summary)
@@ -306,165 +220,91 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         execution_timeout=DOWNLOAD_TIMEOUT,
         retries=3,  # More retries for network operations
     )
-    def download_data_task() -> dict[str, Any]:
-        """Download source file from URL with retry logic."""
-        # Local imports to avoid loading heavy deps at DAG parse time
-        import asyncio  # noqa: PLC0415
+    def download_data_task() -> dict:
+        """Download source file from URL with retry logic.
 
-        import aiohttp  # noqa: PLC0415
-
-        from de_projet_perso.core.downloader import download_to_file  # noqa: PLC0415
-        from de_projet_perso.core.enums import ExistingFileAction  # noqa: PLC0415
-
-        logger.info(f"Downloading {dataset_name}", extra={"url": str(dataset.source.url)})
-
-        # Determine destination path
+        Returns:
+            Dict serialized for XCom (DownloadResult → dict)
+        """
         dest_dir = DATA_DIR / "landing" / dataset_name
-        dest_dir.mkdir(parents=True, exist_ok=True)
 
-        # Extract filename from URL or use dataset name
-        url_path = Path(str(dataset.source.url).split("?")[0])
-        filename = url_path.name or f"{dataset_name}.{dataset.source.format}"
-        dest_path = dest_dir / filename
+        result = PipelineDownloader.download(
+            dataset_name=dataset_name,
+            dataset=dataset,
+            dest_dir=dest_dir,
+        )
 
-        async def _download() -> dict[str, Any]:
-            async with aiohttp.ClientSession() as session:
-                result = await download_to_file(
-                    session=session,
-                    url=str(dataset.source.url),
-                    dest_path=dest_path,
-                    if_exists=ExistingFileAction.OVERWRITE,
-                )
-                if result is None:
-                    return {"path": str(dest_path), "sha256": "cached", "size_mib": 0}
-                return {
-                    "path": str(result.path),
-                    "sha256": result.sha256,
-                    "size_mib": result.size_mib,
-                }
-
-        return asyncio.run(_download())
+        return AirflowTaskAdapter.to_xcom(result)
 
     @task(
         task_id="extract_archive",
         execution_timeout=EXTRACT_TIMEOUT,
     )
-    def extract_archive_task(download_result: dict[str, Any]) -> dict[str, Any]:
-        """Extract archive if format requires it."""
-        import asyncio  # noqa: PLC0415
+    def extract_archive_task(download_data: dict) -> dict:
+        """Extract archive if format requires it.
 
-        from de_projet_perso.core.downloader import extract_7z_async  # noqa: PLC0415
-        from de_projet_perso.core.enums import ExistingFileAction  # noqa: PLC0415
+        Args:
+            download_data: XCom dict from download task
 
-        # Skip if not an archive format
-        if not dataset.source.format.is_archive:
-            logger.info(f"No extraction needed for {dataset_name}")
-            return download_result
+        Returns:
+            Dict serialized for XCom (ExtractionResult → dict)
+        """
+        # Deserialize typed result from XCom
+        download_result = AirflowTaskAdapter.from_xcom_download(download_data)
 
-        inner_file = dataset.source.inner_file
-        if inner_file is None:
-            raise ValueError(f"inner_file required for archive format: {dataset.source.format}")
+        dest_dir = DATA_DIR / "landing" / dataset_name
 
-        archive_path = Path(download_result["path"])
-        extract_dir = DATA_DIR / "landing" / dataset_name
-        dest_path = extract_dir / inner_file
-
-        logger.info(
-            f"Extracting archive for {dataset_name}",
-            extra={"archive": archive_path.name, "target": inner_file},
+        result = PipelineDownloader.extract_archive(
+            archive_path=download_result.path,
+            dataset=dataset,
+            dest_dir=dest_dir,
+            archive_sha256=download_result.sha256,  # Pass SHA256 explicitly
         )
 
-        async def _extract() -> None:
-            await extract_7z_async(
-                archive_path=archive_path,
-                target_filename=inner_file,
-                dest_path=dest_path,
-                if_exists=ExistingFileAction.OVERWRITE,
-                validate_sqlite=dest_path.suffix == ".gpkg",
-            )
-
-        asyncio.run(_extract())
-
-        return {
-            "path": str(dest_path),
-            "sha256": download_result.get("sha256", ""),
-            "size_mib": dest_path.stat().st_size / (1024**2) if dest_path.exists() else 0,
-        }
+        return AirflowTaskAdapter.to_xcom(result)
 
     @task(task_id="save_to_landing")
-    def save_to_landing_task(extract_result: dict[str, Any]) -> dict[str, Any]:
-        """Validate and record landing layer file."""
-        path = Path(extract_result["path"])
+    def save_to_landing_task(extract_data: dict) -> dict:
+        """Validate and record landing layer file.
 
-        if not path.exists():
-            raise FileNotFoundError(f"Expected file not found: {path}")
+        Args:
+            extract_data: XCom dict from extraction task
 
-        logger.info(
-            f"File saved to landing for {dataset_name}",
-            extra={"path": str(path), "size_mib": extract_result.get("size_mib", 0)},
-        )
+        Returns:
+            Dict serialized for XCom (LandingResult → dict)
+        """
+        # Deserialize typed result from XCom
+        extract_result = AirflowTaskAdapter.from_xcom_extraction(extract_data)
 
-        return {
-            "path": str(path),
-            "sha256": extract_result.get("sha256", ""),
-            "size_mib": extract_result.get("size_mib", 0),
-            "layer": "landing",
-        }
+        landing_result = PipelineDownloader.validate_landing(extract_result)
+        return AirflowTaskAdapter.to_xcom(landing_result)
 
     @task(
         task_id="convert_to_bronze",
         execution_timeout=TRANSFORM_TIMEOUT,
     )
-    def convert_to_bronze_task(landing_result: dict[str, Any]) -> dict[str, Any]:
-        """Convert to Parquet with normalized column names."""
-        import polars as pl  # noqa: PLC0415
+    def convert_to_bronze_task(landing_data: dict) -> dict:
+        """Convert to Parquet with normalized column names.
 
-        source_path = Path(landing_result["path"])
+        Args:
+            landing_data: XCom dict from landing validation task
+
+        Returns:
+            Dict serialized for XCom (BronzeResult → dict)
+        """
+        # Deserialize typed result from XCom
+        landing_result = AirflowTaskAdapter.from_xcom_landing(landing_data)
+
         bronze_dir = DATA_DIR / "bronze" / dataset_name
-        bronze_dir.mkdir(parents=True, exist_ok=True)
-        bronze_path = bronze_dir / f"{dataset.ingestion.version}.parquet"
 
-        logger.info(
-            f"Converting to bronze for {dataset_name}",
-            extra={"source": source_path.name, "dest": bronze_path.name},
+        bronze_result = PipelineTransformer.to_bronze(
+            landing_result=landing_result,
+            dataset_name=dataset_name,
+            dataset=dataset,
+            bronze_dir=bronze_dir,
         )
 
-        # Read based on format
-        if source_path.suffix == ".gpkg":
-            # GeoPackage needs special handling with DuckDB
-            import duckdb  # noqa: PLC0415
-
-            conn = duckdb.connect()
-            conn.execute("INSTALL spatial; LOAD spatial;")
-            df = conn.execute(f"SELECT * FROM st_read('{source_path}')").pl()
-        elif source_path.suffix == ".parquet":
-            df = pl.read_parquet(source_path)
-        elif source_path.suffix == ".json":
-            df = pl.read_json(source_path)
-        else:
-            raise ValueError(f"Unsupported format: {source_path.suffix}")
-
-        # Normalize column names to snake_case
-        df = df.rename(lambda col: col.lower().replace(" ", "_").replace("-", "_"))
-
-        # Write to Parquet
-        df.write_parquet(bronze_path)
-
-        columns = df.columns
-        row_count = len(df)
-
-        logger.info(
-            f"Bronze conversion complete for {dataset_name}",
-            extra={"rows": row_count, "columns": len(columns)},
-        )
-
-        return {
-            "path": str(bronze_path),
-            "row_count": row_count,
-            "columns": columns,
-            "sha256": landing_result.get("sha256", ""),
-            "layer": "bronze",
-        }
+        return AirflowTaskAdapter.to_xcom(bronze_result)
 
     @task(task_id="validate_state_coherence")
     def validate_state_coherence_task() -> dict[str, Any]:
@@ -485,47 +325,12 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
             - issues: list of detected problems
             - expected_path: path that should exist
         """
-        state = StateManager.load(dataset_name)
-        expected_path = DATA_DIR / dataset.get_storage_path()
-
-        validation_result = {
-            "dataset": dataset_name,
-            "expected_path": str(expected_path),
-            "expected_exists": expected_path.exists(),
-            "state_file_exists": state is not None,
-            "coherent": True,
-            "issues": [],
-        }
-
-        # Check if expected file exists
-        if not expected_path.exists():
-            validation_result["issues"].append(f"Expected file missing: {expected_path}")
-            validation_result["coherent"] = False
-
-        # Check state coherence
-        if state and state.last_successful_run:
-            silver_stage = state.last_successful_run.stages.get("silver")
-            if silver_stage and silver_stage.path:
-                recorded_path = Path(silver_stage.path)
-                if recorded_path != expected_path:
-                    validation_result["issues"].append(
-                        f"Path mismatch - recorded: {recorded_path}, expected: {expected_path}"
-                    )
-                    validation_result["coherent"] = False
-                    logger.warning(
-                        "State file path mismatch",
-                        extra={
-                            "recorded": str(recorded_path),
-                            "expected": str(expected_path),
-                        },
-                    )
-
-        if validation_result["coherent"]:
-            logger.info("State validation passed", extra=validation_result)
-        else:
-            logger.error("State validation failed", extra=validation_result)
-
-        return validation_result
+        result = PipelineValidator.validate_state_coherence(
+            dataset_name=dataset_name,
+            dataset=dataset,
+            data_dir=DATA_DIR,
+        )
+        return result.to_dict()
 
     @task(
         task_id="transform_to_silver",
@@ -533,45 +338,43 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         execution_timeout=TRANSFORM_TIMEOUT,
     )
     def transform_to_silver_task(
-        bronze_result: dict[str, Any], context=None
+        bronze_data: dict, context=None
     ) -> Generator[Metadata, None, None]:
         """Apply business transformations and emit Asset metadata.
 
         This is the ONLY task that emits Metadata (Airflow 3.x best practice).
+
+        Args:
+            bronze_data: XCom dict from bronze transformation task
+            context: Airflow task context
+
+        Yields:
+            Metadata for the silver Asset with enriched information
         """
-        import polars as pl  # noqa: PLC0415
+        # Deserialize typed result from XCom
+        bronze_result = AirflowTaskAdapter.from_xcom_bronze(bronze_data)
 
-        bronze_path = Path(bronze_result["path"])
         silver_dir = DATA_DIR / "silver" / dataset_name
-        silver_dir.mkdir(parents=True, exist_ok=True)
-        silver_path = silver_dir / f"{dataset.ingestion.version}.parquet"
-
-        logger.info(
-            f"Transforming to silver for {dataset_name}",
-            extra={"source": bronze_path.name},
-        )
 
         # Track start time for duration calculation
         start_time = datetime.now()
-        df = pl.read_parquet(bronze_path)
 
-        # Dataset-specific transformations would go here
-        # For now, just copy to silver layer
-        df.write_parquet(silver_path)
-
-        # Update state
-        _update_pipeline_state(
+        # Transform to silver
+        silver_result = PipelineTransformer.to_silver(
+            bronze_result=bronze_result,
             dataset_name=dataset_name,
-            version=dataset.ingestion.version,
-            silver_path=silver_path,
-            row_count=len(df),
-            columns=df.columns,
-            sha256=bronze_result.get("sha256", ""),
+            dataset=dataset,
+            silver_dir=silver_dir,
         )
 
-        logger.info(
-            f"Silver transformation complete for {dataset_name}",
-            extra={"path": str(silver_path), "rows": len(df)},
+        # Update state with full traceability
+        PipelineStateManager.update_success(
+            dataset_name=dataset_name,
+            version=dataset.ingestion.version,
+            silver_path=silver_result.path,
+            row_count=silver_result.row_count,
+            columns=silver_result.columns,
+            sha256=silver_result.sha256,  # Landing file SHA256
         )
 
         # Calculate run duration
@@ -579,17 +382,17 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         run_duration = (end_time - start_time).total_seconds()
 
         # Infer which action triggered this run
-        # Note: We reconstruct the action from state rather than using XCom
-        # because decide_action returns the next task_id, not the action itself
-        action_taken = "UNKNOWN"
+        action_taken = PipelineAction.FIRST_RUN
         if context:
             try:
                 ti = context.get("ti")
                 if ti:
-                    state = StateManager.load(dataset_name)
-                    action_taken = _infer_action_from_state(state, dataset)
+                    state = PipelineStateManager.load(dataset_name)
+                    action_taken = PipelineDecisionEngine.infer_action_from_state(
+                        state, dataset, DATA_DIR
+                    )
             except Exception:
-                # Fallback to UNKNOWN if context unavailable or state unreadable
+                # Fallback to FIRST_RUN if context unavailable or state unreadable
                 pass
 
         # Emit enriched metadata for Airflow UI
@@ -597,18 +400,21 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         yield Metadata(
             asset=asset,
             extra={
-                # Original metadata (kept for compatibility)
-                "row_count": len(df),
-                "columns": list(df.columns),  # Convert to list for JSON serialization
-                "sha256": bronze_result.get("sha256", ""),
+                # Dataset metrics
+                "row_count": silver_result.row_count,
+                "columns": list(silver_result.columns),
                 "version": dataset.ingestion.version,
+                # Integrity & traceability
+                "file_sha256": silver_result.sha256,  # SHA256 of extracted/landing file
+                "archive_sha256": silver_result.archive_sha256,  # SHA256 of original archive
+                # Run metadata
                 "completed_at": end_time.isoformat(),
                 "status": "success",
-                # New enriched metadata
-                "action_taken": action_taken,
-                "state_file": str(StateManager.get_state_path(dataset_name)),
+                "action_taken": str(action_taken),
                 "run_duration_seconds": round(run_duration, 2),
-                "silver_path": str(silver_path),
+                # Paths for reference
+                "silver_path": str(silver_result.path),
+                "state_file": str(PipelineStateManager.get_state_path(dataset_name)),
             },
         )
 
@@ -625,79 +431,9 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
     }
 
 
-def _infer_action_from_state(state, dataset: Dataset) -> str:
-    """Infer which action was taken based on current state.
-
-    This helper reconstructs the action taken by applying the same
-    logic as decide_pipeline_action(), useful for metadata enrichment.
-
-    Note: This function duplicates the decision logic to provide
-    the action in metadata without requiring XCom communication
-    between decide_action and transform_to_silver tasks.
-
-    Args:
-        state: Current pipeline state (PipelineState or None)
-        dataset: Dataset configuration
-
-    Returns:
-        Action string (FORCE/HEAL/RETRY/REFRESH/SKIP)
-    """
-    if state is None:
-        return "FORCE"
-
-    expected_path = DATA_DIR / dataset.get_storage_path()
-    if not expected_path.exists():
-        return "HEAL"
-
-    if state.last_failed_run is not None:
-        if state.last_successful_run is None or (
-            state.last_failed_run.timestamp > state.last_successful_run.timestamp
-        ):
-            return "RETRY"
-
-    if state.last_successful_run is not None:
-        frequency_delta = _frequency_to_timedelta(dataset.ingestion.frequency)
-        if frequency_delta is not None:
-            age = datetime.now() - state.last_successful_run.timestamp
-            if age > frequency_delta:
-                return "REFRESH"
-
-    return "SKIP"
-
-
-def _update_pipeline_state(  # noqa: PLR0913
-    dataset_name: str,
-    version: str,
-    silver_path: Path,
-    row_count: int,
-    columns: list[str],
-    sha256: str,
-) -> None:
-    """Update pipeline state after successful run."""
-    from de_projet_perso.core.pipeline_state import RunRecord, StageStatus  # noqa: PLC0415
-
-    state = StateManager.load(dataset_name)
-    if state is None:
-        state = StateManager.create_new(dataset_name, version)
-
-    state.last_successful_run = RunRecord(
-        timestamp=datetime.now(),
-        run_id=f"{dataset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        version=version,
-        duration_seconds=0,  # Would need to track actual duration
-        stages={
-            "silver": StageStatus(
-                status="success",
-                timestamp=datetime.now(),
-                path=str(silver_path),
-                row_count=row_count,
-                columns=columns,
-                sha256=sha256,
-            )
-        },
-    )
-
-    StateManager.save(state)
+# Business logic functions moved to pipeline modules:
+# - _infer_action_from_state() -> PipelineDecisionEngine.infer_action_from_state()
+# - _update_pipeline_state() -> PipelineStateManager.update_success()
 
 
 # =============================================================================
@@ -830,5 +566,4 @@ def _generate_all_pipelines() -> dict[str, DAG]:
 # =============================================================================
 # The Single Global Variable (Required by Airflow)
 # =============================================================================
-
-PIPELINES = _generate_all_pipelines()
+_generate_all_pipelines()

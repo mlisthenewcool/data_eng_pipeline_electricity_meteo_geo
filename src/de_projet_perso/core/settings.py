@@ -5,8 +5,8 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent.parent.parent.parent
 DATA_DIR = ROOT_DIR / "data"
 
-# TODO: move to /data/ folder, but then have to move the file from local to airflow container
-DATA_CATALOG_PATH = ROOT_DIR / "src/data_catalog.yaml"
+DATA_CATALOG_PATH = DATA_DIR / "catalog.yaml"
+DATA_STATE_PATH = DATA_DIR / "_state"
 
 # =============================================================================
 # Download Settings

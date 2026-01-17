@@ -341,8 +341,8 @@ class LoguruLogger:
         an active exception, logs a warning instead of a traceback.
 
         Args:
-            message: The log message.
-            **kwargs: Optional ``extra`` dict for structured context.
+            message (str): The log message.
+            **kwargs: Optional keyword arguments. Supports ``extra`` dict for structured context.
 
         Example:
             >>> try:

@@ -41,7 +41,7 @@ services:
     container_name: airflow_container # remove scale possibility
     build:
       context: .
-      dockerfile: airflow/Dockerfile
+      dockerfile: airflow.Dockerfile
     restart: always
     depends_on:
       postgres_service:
@@ -55,13 +55,14 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: False
       AIRFLOW__LOGGING__LOGGING_LEVEL: "INFO" # TODO: consistency with custom logging
       AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 5 # by default
+      # AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/de_projet_perso/airflow/dags # TODO: prod ?
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./airflow/dags:/opt/airflow/dags
+      - ./src/de_projet_perso/airflow/dags:/opt/airflow/dags # TODO: retirer en prod, remplacer par la variable AIRFLOW__CORE__DAGS_FOLDER
       - ./src:/opt/airflow/src
-      # - ./data:/opt/airflow/data
-      - airflow_data:/opt/airflow/data # persistent
+      - ./data:/opt/airflow/data # TODO: retirer en prod
+      # - airflow_data:/opt/airflow/data # TODO: ajouter en prod
     healthcheck:
       # https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html
       test: [ "CMD-SHELL", "curl -sf http://localhost:8080/api/v2/monitor/health || exit 1" ]
@@ -82,4 +83,4 @@ secrets:
 
 volumes:
   postgres_data:
-  airflow_data:
+  # airflow_data: # TODO: ajouter en prod

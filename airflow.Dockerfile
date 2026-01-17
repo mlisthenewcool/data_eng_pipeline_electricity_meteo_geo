@@ -15,6 +15,7 @@ RUN apt-get update \
 # permissions to create subdirectories at runtime, preventing failures in
 # dest_path.parent.mkdir(parents=True, exist_ok=True)."
 RUN mkdir -p /opt/airflow/data && chown -R airflow:root /opt/airflow/data
+# COPY data/catalog.yaml /opt/airflow/data/catalog.yaml
 
 USER airflow
 RUN pip install --no-cache-dir --upgrade uv
