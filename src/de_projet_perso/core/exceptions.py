@@ -146,17 +146,22 @@ class InvalidCatalogError(DataCatalogError):
     Attributes:
         path: Path to the catalog file (None if loaded from string).
         reason: Specific details about the validation or parsing failure.
+        validation_errors: Optional, Pydantic validation errors.
     """
 
-    def __init__(self, path: Path, reason: str) -> None:
+    def __init__(
+        self, path: Path, reason: str, validation_errors: dict[str, str] | None = None
+    ) -> None:
         """Initializes the error with the catalog path and failure reason.
 
         Args:
             path: Path to the data catalog file.
             reason: Description of why validation failed.
+            validation_errors: Optional, Pydantic validation errors.
         """
         self.path = path
         self.reason = reason
+        self.validation_errors = validation_errors
         super().__init__(f"Data catalog could not be validated for {path}: {reason}")
 
 

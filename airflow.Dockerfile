@@ -15,13 +15,14 @@ RUN apt-get update \
 # permissions to create subdirectories at runtime, preventing failures in
 # dest_path.parent.mkdir(parents=True, exist_ok=True)."
 RUN mkdir -p /opt/airflow/data && chown -R airflow:root /opt/airflow/data
+# COPY data/catalog.yaml /opt/airflow/data/catalog.yaml
 
 USER airflow
 RUN pip install --no-cache-dir --upgrade uv
 RUN uv python upgrade
 
-# TODO: use psycopg with system tools instead of binary ?
-# TODO: use `--mount=type=cache` instead of --no-cache ?
+# NOTE: use psycopg with system tools instead of binary ?
+# NOTE: use `--mount=type=cache` instead of --no-cache ?
 RUN uv pip install --no-cache \
     aiofiles aiohttp duckdb loguru polars "psycopg[binary]" py7zr pydantic \
     python-json-logger pyyaml tqdm

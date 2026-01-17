@@ -15,6 +15,12 @@ data/**/*
 
 .idea/
 
+# TODO: add docs after refactoring
+docs/*
+AGENTS.md
+CLAUDE.md
+opencode.jsonc
+
 # --------------------------------------------------------------
 # https://github.com/github/gitignore/blob/main/Python.gitignore
 # copy content from this file under (last copied 2025_12_22)
