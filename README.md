@@ -36,20 +36,18 @@ Voir [README_DX.md](docs/README_DX.md)
 
 ## TODO
 
-* ancien dossier
-    * CLAUDE.md : transférer vers AGENTS
-    * tests/test_downloader.py
-    * notebooks/
+- [x] passage à pydantic-settings
+- [x] déplacer data_catalog.yaml dans dossier data et modifier le build Docker
+    - [ ] voir les TODO de mise en prod dans le docker-compose.yaml
+- [ ] modifier les raise ... from e
+- [ ] comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant le parsing
+  des DAGS ?
 
-[x] passage à pydantic-settings
-
-* déplacer data_catalog.yaml
-* modifier les raise ... from e
-* comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant la validation ?
-* tests/
-    * test_logger
-        * vérifier la redirection vers Airflow
-        * vérifier que passer un objet non mutable à la méthode _format_extra ne change rien
+- tests/
+    - [ ] transfert ancien downloader
+    - [ ] test_logger
+        - [ ] vérifier la redirection vers Airflow
+        - [ ] vérifier que passer un objet non mutable à la méthode _format_extra ne change rien
 
 * ajouter configuration Open Lineage
     * https://airflow.apache.org/docs/apache-airflow-providers-openlineage/stable/guides/user.html

@@ -1,0 +1,74 @@
+# à ajouter ?
+#quality: "..."
+#schema: "..."
+#tags: "..."
+#owner: "..."
+#source:
+#  license: "..."
+#  documentation_url: "..."
+#ingestion:
+#  retention_days: "..."
+#  retention_versions: ".."
+#  filters:
+#    # "&refine.nature=Données+consolidées"
+#    lang: "fr"
+#    timezone: "Europe/Paris"
+#    refine.nature: "Données consolidées"
+
+
+
+
+datasets:
+  ign_contours_iris:
+    description: "La base de données de référence pour la diffusion infra-communale des résultats du recensement de la population par Iris, de précision décamétrique"
+    source:
+      provider: "IGN"
+      url: "https://data.geopf.fr/telechargement/download/CONTOURS-IRIS/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2025-01-01/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2025-01-01.7z"
+      format: "7z"
+      inner_file: "iris.gpkg"
+    ingestion:
+      version: "2025_01_01"
+      frequency: "hourly"
+      mode: "snapshot"
+    storage: "{layer}/ign/contours_iris_{version}.parquet"
+  #      dir: "{layer}/ign/"
+  #      file: "contours_iris_{version}.parquet"
+
+  odre_installations:
+    description: "..."
+    source:
+      provider: "ODRE"
+      url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/registre-national-installation-production-stockage-electricite-agrege/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
+      format: "parquet"
+    ingestion:
+      version: "2025_10_31"
+      frequency: "daily"
+      mode: "snapshot"
+    storage: "{layer}/odre/installations_{version}.parquet"
+
+  odre_eco2mix_cons_def:
+    description: "..."
+    source:
+      provider: "ODRE"
+      url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-regional-cons-def/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
+      format: "parquet"
+    ingestion:
+      version: "2026_01_01"
+      frequency: "hourly"
+      mode: "snapshot"
+      # mode: "incremental"
+      # incremental_key: "date_heure"
+    # storage: "{layer}/odre/eco2mix_cons_def/{timestamp}.parquet"
+    storage: "{layer}/odre/eco2mix_cons_def/{version}.parquet"
+
+  meteo_france_stations:
+    description: "..."
+    source:
+      provider: "Météo France"
+      url: "https://www.data.gouv.fr/api/1/datasets/r/1fe544d8-4615-4642-a307-5956a7d90922"
+      format: "json" # "geojson"
+    ingestion:
+      version: "2026_01_01"
+      frequency: "daily"
+      mode: "snapshot"
+    storage: "{layer}/meteo_france/stations_{version}.parquet"
