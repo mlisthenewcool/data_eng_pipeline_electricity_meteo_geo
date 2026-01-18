@@ -55,40 +55,55 @@ Voir [README_DX.md](docs/README_DX.md)
 
 ## TODO
 
+### Priorité 1
+
 - [x] déplacer data_catalog.yaml dans le dossier data et modifier le build Docker
     - [ ] TODO de mise en prod dans le docker-compose.yaml
 - [x] passage à pydantic-settings
-- [ ] modifier les raise ... from e
-- [ ] comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant le parsing
-  des DAGS ?
-- [ ] mettre en place politique de rétention pour la couche bronze
-- [ ] créer exemple complet pipeline sans Airflow
-- [ ] ajout des documentations des données avec les anciens fichiers
+
+- [ ] corriger les problèmes de résolution de chemin
+    - [ ] calcul dans settings directement
+    - [ ] trouver un moyen de gérer proprement les archives (ajout inner_path_extension au Dataset ?)
+    - [ ] ajout d'un type pour le nom des layers (StrEnum)
+
 - [ ] simplifier pipeline
     - [ ] cohérence des arguments
+    - [x] passage à 2 DAGs spécifiques (un avec et un sans extraction d'archive)
     - [ ] retirer tâche "landing" qui est juste là pour les XCom ?
     - [ ] ajouter class PipelineContext qui réduit le nombre de passages d'arguments et centralise l'info
     - [ ] documenter choix des Serializer, des transformations et du déroulement logique du pipeline
     - [ ] cohérence avec les sha256
-    - [ ] valider par de la data quality les couches bronze & silver
+    - [ ] créer exemple complet pipeline sans Airflow
+
+- [ ] check_should_run doit arriver contrôle de la cohérence ?
+    - → check_state
+        - → si ok → check_should_run
+        - → sinon → heal_state
+            - → download_data → ...
+
 - [ ] ajout mécanisme pour vérifier la "fraîcheur" des données (requête HEAD si possible, ou comparaison hash_sha256)
+
+- [ ] complexité du state management: on gère un système indépendant + celui de Airflow
+    - [ ] vérifier qu'on ne puisse pas tout passer sous Airflow (vérifier sha256 pour sûr, autre chose ?)
+
+## Priorité 2
+
+- [ ] comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant le parsing
+  des DAGS ?
+
 - [ ] ajout transformations de base silver
     - [ ] normaliser (types, unités)
     - [ ] cohérence générale (pas de données aberrantes)
-- [ ] corriger les problèmes de résolution de chemin
-    - [ ] calcul dans settings directement
-    - [ ] trouver un moyen de gérer proprement les archives (ajout inner_path_extension au Dataset ?)
-- [ ] ajout d'un type pour le nom des layers (StrEnum)
-- [ ] ajout métrique de performances
-- [ ] ajout du mode incrémental ?
-- [ ] potentiel problème de performances pour la lecture des dataframes (à documenter, pour l'instant cohérence
-  bronze/silver lors du passage des arguments aux fonctions de transformations)
-    - puisqu'on change de tâche entre bronze & silver, on doit relire à nouveau le même dataframe
-- [ ] complexité du state management: on gère un système indépendant + celui de Airflow
-    - [ ] vérifier qu'on ne puisse pas tout passer sous Airflow (vérifier sha256 pour sûr, autre chose ?)
-- si besoin de paralléliser, regarder @task.map
-- si besoin d'améliorer perfs, faire du incremental loading pour les datasets
+- [ ] valider par de la data quality les couches bronze & silver
 
+- [ ] ajout du mode incrémental ?
+
+## Priorité 3
+
+- [ ] modifier les raise ... from e
+
+- [ ] mettre en place politique de rétention pour la couche bronze
+- [ ] ajout des documentations des données avec les anciens fichiers
 
 - [ ] tests/
     - [ ] transfert ancien downloader
@@ -97,4 +112,13 @@ Voir [README_DX.md](docs/README_DX.md)
         - [ ] vérifier que passer un objet non mutable à la méthode _format_extra ne change rien
     - [ ] tester au moins les fonctions critiques
         - [ ] download, extract, transformations
+
+### Priorité 4
+
+- [ ] ajout métrique de performances
 - [ ] [ajouter configuration Open Lineage](https://airflow.apache.org/docs/apache-airflow-providers-openlineage/stable/guides/user.html)
+- [ ] si besoin de paralléliser, regarder @task.map
+- [ ] si besoin d'améliorer perfs, faire du incremental loading pour les datasets
+- [ ] potentiel problème de performances pour la lecture des dataframes (à documenter, pour l'instant cohérence
+  bronze/silver lors du passage des arguments aux fonctions de transformations). Puisqu'on change de tâche entre
+  bronze & silver, on doit relire à nouveau le même dataframe.
