@@ -5,37 +5,56 @@ Each dataset can register custom transformation functions that will be applied
 during pipeline execution.
 
 Example:
+    from pathlib import Path
+
     @register_bronze("my_dataset")
-    def transform(df: pl.DataFrame, dataset_name: str) -> pl.DataFrame:
+    def transform(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
+        df = pl.read_parquet(landing_path)
         return df.filter(pl.col("status") == "active")
 """
 
+from pathlib import Path
 from typing import Callable
 
 import polars as pl
 
 from de_projet_perso.core.data_catalog import Dataset
 
-TransformFunction = Callable[[Dataset], pl.DataFrame]
+# Bronze transforms receive the landing file path explicitly
+BronzeTransformFunc = Callable[[Dataset, Path], pl.DataFrame]
+
+# Silver transforms still use dataset (reads from bronze path)
+SilverTransformFunc = Callable[[Dataset], pl.DataFrame]
+
+# Legacy type alias for backward compatibility
+TransformFunction = BronzeTransformFunc
 
 # Private registries
-_BRONZE_TRANSFORMS: dict[str, TransformFunction] = {}
-_SILVER_TRANSFORMS: dict[str, TransformFunction] = {}
+_BRONZE_TRANSFORMS: dict[str, BronzeTransformFunc] = {}
+_SILVER_TRANSFORMS: dict[str, SilverTransformFunc] = {}
 
 
 def register_bronze(dataset_name: str):
     """Decorator to register a bronze layer transformation.
 
+    Bronze transformations receive:
+    - dataset: Dataset configuration from catalog
+    - landing_path: Actual path to the landing file (with original filename)
+
     Args:
         dataset_name: Dataset identifier (must match catalog key)
 
     Example:
+        from pathlib import Path
+
         @register_bronze("ign_contours_iris")
-        def transform(df: pl.DataFrame, dataset_name: str) -> pl.DataFrame:
+        def transform(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
+            # Read from actual landing file (preserves original filename)
+            df = pl.read_parquet(landing_path)
             return df.filter(pl.col("code_iris").is_not_null())
     """
 
-    def decorator(func: TransformFunction) -> TransformFunction:
+    def decorator(func: BronzeTransformFunc) -> BronzeTransformFunc:
         _BRONZE_TRANSFORMS[dataset_name] = func
         return func
 
@@ -45,42 +64,48 @@ def register_bronze(dataset_name: str):
 def register_silver(dataset_name: str):
     """Decorator to register a silver layer transformation.
 
+    Silver transformations receive only the dataset configuration.
+    They read from the standardized bronze path.
+
     Args:
         dataset_name: Dataset identifier (must match catalog key)
 
     Example:
         @register_silver("ign_contours_iris")
-        def transform(df: pl.DataFrame, dataset_name: str) -> pl.DataFrame:
+        def transform(dataset: Dataset) -> pl.DataFrame:
+            # Read from bronze (standardized path)
+            bronze_path = dataset.get_bronze_path()
+            df = pl.read_parquet(bronze_path)
             return df.with_columns([pl.col("area").cast(pl.Float64)])
     """
 
-    def decorator(func: TransformFunction) -> TransformFunction:
+    def decorator(func: SilverTransformFunc) -> SilverTransformFunc:
         _SILVER_TRANSFORMS[dataset_name] = func
         return func
 
     return decorator
 
 
-def get_bronze_transform(dataset_name: str) -> TransformFunction | None:
+def get_bronze_transform(dataset_name: str) -> BronzeTransformFunc | None:
     """Get registered bronze transformation for a dataset.
 
     Args:
         dataset_name: Dataset identifier
 
     Returns:
-        Transformation function or None if not registered
+        Bronze transformation function or None if not registered
     """
     return _BRONZE_TRANSFORMS.get(dataset_name)
 
 
-def get_silver_transform(dataset_name: str) -> TransformFunction | None:
+def get_silver_transform(dataset_name: str) -> SilverTransformFunc | None:
     """Get registered silver transformation for a dataset.
 
     Args:
         dataset_name: Dataset identifier
 
     Returns:
-        Transformation function or None if not registered
+        Silver transformation function or None if not registered
     """
     return _SILVER_TRANSFORMS.get(dataset_name)
 
@@ -104,5 +129,7 @@ __all__ = [
     "register_silver",
     "get_bronze_transform",
     "get_silver_transform",
-    "TransformFunction",
+    "BronzeTransformFunc",
+    "SilverTransformFunc",
+    "TransformFunction",  # Legacy alias
 ]

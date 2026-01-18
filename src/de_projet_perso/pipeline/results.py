@@ -45,11 +45,13 @@ class DownloadResult:
         path: Path to downloaded file (archive or final file)
         sha256: SHA256 hash of downloaded content
         size_mib: File size in mebibytes
+        original_filename: Original filename from server (Content-Disposition or URL)
     """
 
     path: Path
     sha256: str
     size_mib: float
+    original_filename: str
 
     def to_serializable(self) -> dict[str, str | float]:
         """Convert to dict for Airflow XCom serialization.
@@ -61,6 +63,7 @@ class DownloadResult:
             "path": str(self.path),
             "sha256": self.sha256,
             "size_mib": self.size_mib,
+            "original_filename": self.original_filename,
         }
 
 
@@ -80,12 +83,15 @@ class ExtractionResult:
         size_mib: File size in mebibytes
         extracted_sha256: SHA256 of the final extracted file
         archive_sha256: SHA256 of the source archive (for traceability)
+        original_filename: Original filename from source
+            (inner_file for archives, server filename for direct downloads)
     """
 
     path: Path
     size_mib: float
     extracted_sha256: str
     archive_sha256: str
+    original_filename: str
 
     def to_serializable(self) -> dict[str, str | float]:
         """Convert to dict for Airflow XCom serialization.
@@ -98,6 +104,7 @@ class ExtractionResult:
             "size_mib": self.size_mib,
             "extracted_sha256": self.extracted_sha256,
             "archive_sha256": self.archive_sha256,
+            "original_filename": self.original_filename,
         }
 
 
@@ -110,10 +117,11 @@ class LandingResult:
     is valid and ready for bronze conversion.
 
     Attributes:
-        path: Path to validated landing file
+        path: Path to validated landing file (preserves original filename)
         sha256: SHA256 of the file (extracted_sha256 from extraction)
         size_mib: File size in mebibytes
         archive_sha256: Original archive SHA256 (for traceability)
+        original_filename: Original filename from source (for audit trail)
         layer: Always "landing"
     """
 
@@ -121,6 +129,7 @@ class LandingResult:
     sha256: str
     size_mib: float
     archive_sha256: str
+    original_filename: str
     layer: str = "landing"
 
     def to_serializable(self) -> dict[str, str | float]:
@@ -134,6 +143,7 @@ class LandingResult:
             "sha256": self.sha256,
             "size_mib": self.size_mib,
             "archive_sha256": self.archive_sha256,
+            "original_filename": self.original_filename,
             "layer": self.layer,
         }
 

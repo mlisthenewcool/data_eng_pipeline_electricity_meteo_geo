@@ -438,8 +438,39 @@ class Dataset(StrictModel):
             layer=layer, version=self.ingestion.version
         )
 
+    def get_landing_dir(self) -> Path:
+        """Get landing directory for this dataset.
+
+        The landing layer preserves original filenames from the source.
+        This method returns the directory where raw files are stored,
+        not a specific file path.
+
+        Returns:
+            Directory path for landing files (e.g., data/landing/ign/)
+
+        Example:
+            >>> dataset.get_landing_dir()
+            Path('data/landing/ign')
+
+        Note:
+            Files in this directory preserve their original names from the source:
+            - Archives: Original archive filename from server
+            - Extracted files: Original inner_file name from archive
+            - Direct downloads: Filename from Content-Disposition or URL
+        """
+        return settings.data_dir_path / "landing" / self.source.provider
+
     def get_landing_path(self) -> Path:
-        """TODO."""
+        """Get landing file path with standardized naming (DEPRECATED).
+
+        DEPRECATED: This method applies standardized naming too early in the pipeline.
+        New code should use get_landing_dir() to get the directory and preserve
+        original filenames. This method is kept for backward compatibility with
+        existing transformations.
+
+        Returns:
+            Path with standardized filename (old behavior)
+        """
         if self.source.inner_file:
             inner_file_file_extension = Path(self.source.inner_file).suffix
             return self._get_storage_path(layer="landing").with_suffix(inner_file_file_extension)
@@ -447,11 +478,27 @@ class Dataset(StrictModel):
         return self._get_storage_path(layer="landing")
 
     def get_bronze_path(self) -> Path:
-        """TODO."""
+        """Get bronze file path with standardized naming.
+
+        The bronze layer applies the standardized naming convention defined
+        in the catalog's storage template. This is where filenames are
+        normalized according to the project's naming standards.
+
+        Returns:
+            Path to bronze file with standardized name
+
+        Example:
+            >>> dataset.get_bronze_path()
+            Path('data/bronze/ign/contours_iris_2025_01_01.parquet')
+        """
         return self._get_storage_path(layer="bronze")
 
     def get_silver_path(self) -> Path:
-        """TODO."""
+        """Get silver file path with standardized naming.
+
+        Returns:
+            Path to silver file with standardized name
+        """
         return self._get_storage_path(layer="silver")
 
 

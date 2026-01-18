@@ -18,11 +18,13 @@ Example:
     ... print(f"Extracted: {file_info.path}, SHA256: {file_info.sha256}")
 """
 
+import re
 import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import httpx
 import py7zr
@@ -94,19 +96,89 @@ class TqdmToLoguru:
         pass
 
 
-def download_to_file(url: str, dest_path: Path) -> DownloadResult:
+def extract_filename_from_response(response: httpx.Response, url: str) -> str:
+    """Extract original filename from HTTP response or URL.
+
+    Priority order:
+    1. Content-Disposition header (most reliable - server specifies filename)
+    2. URL path basename (fallback - extract from URL path)
+    3. "download.bin" (last resort if both methods fail)
+
+    Args:
+        response: HTTP response object from httpx
+        url: Original request URL
+
+    Returns:
+        Extracted filename (sanitized for filesystem use)
+
+    Example:
+        >>> response.headers = {"Content-Disposition": "attachment; filename=data.parquet"}
+        >>> extract_filename_from_response(response, url)
+        'data.parquet'
+
+        >>> response.headers = {}
+        >>> extract_filename_from_response(response, "https://example.com/export/file.csv")
+        'file.csv'
+    """
+    # Try Content-Disposition header first
+    content_disp = response.headers.get("content-disposition", "")
+    if content_disp:
+        # Parse Content-Disposition header (handles various formats)
+        # Examples: "attachment; filename=data.csv"
+        #           "attachment; filename*=UTF-8''data%20file.csv"
+
+        # Try standard filename parameter
+        match = re.search(r'filename="?([^";\n]+)"?', content_disp)
+        if match:
+            filename = match.group(1).strip()
+            # Remove any path separators for security
+            filename = Path(filename).name
+            if filename and filename != ".":
+                logger.debug(
+                    "Extracted filename from Content-Disposition",
+                    extra={"filename": filename, "header": content_disp},
+                )
+                return filename
+
+    # Fallback: extract from URL path
+    try:
+        parsed = urlparse(url)
+        path_parts = parsed.path.rstrip("/").split("/")
+        if path_parts:
+            # Get last non-empty part, decode URL encoding
+            filename = unquote(path_parts[-1])
+            # Remove query parameters if accidentally included
+            filename = filename.split("?")[0]
+            filename = Path(filename).name
+            if filename and filename != "." and "." in filename:
+                logger.debug(
+                    "Extracted filename from URL path", extra={"filename": filename, "url": url}
+                )
+                return filename
+    except Exception as e:
+        logger.warning("Failed to extract filename from URL", extra={"url": url, "error": str(e)})
+
+    # Last resort: generic name
+    logger.warning("Could not extract filename, using default", extra={"url": url})
+    return "download.bin"
+
+
+def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
     """Download a file from URL with streaming, progress bar, and SHA256.
 
     Performs memory-efficient download by streaming chunks to disk.
     Automatically creates parent directories if needed.
     Uses HTTP/2 when available for better performance.
 
+    The filename is extracted from the Content-Disposition header or URL path,
+    preserving the original server-provided filename.
+
     Args:
         url: URL of the file to download.
-        dest_path: Local path where the file will be saved.
+        dest_dir: Directory where the file will be saved (filename extracted from response).
 
     Returns:
-        DownloadResult with path, sha256, and size_mib.
+        DownloadResult with path, sha256, size_mib, and original_filename.
 
     Raises:
         httpx.HTTPStatusError: If server returns error status (4xx/5xx).
@@ -115,14 +187,12 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
     Example:
         result = download_to_file(
             "https://example.com/data.7z",
-            Path("/data/landing/data.7z")
+            Path("/data/landing/ign_contours_iris")
         )
-        print(f"Downloaded {result.size_mib} MiB, hash: {result.sha256}")
+        # File saved to: /data/landing/ign_contours_iris/CONTOURS-IRIS_3-0...7z
+        print(f"Downloaded {result.original_filename}: {result.size_mib} MiB")
     """
-    if dest_path.exists():
-        logger.warning(message="File already exists", extra={"url": url})
-
-    logger.info("Starting download", extra={"url": url, "will_save_to": dest_path.name})
+    logger.info("Starting download", extra={"url": url, "dest_dir": str(dest_dir)})
 
     timeout = httpx.Timeout(  # TODO, documenter & ajouter arguments write/pool
         timeout=settings.download_timeout_total,
@@ -136,6 +206,17 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
         with client.stream("GET", url) as response:
             response.raise_for_status()
 
+            # Extract original filename from response headers or URL
+            original_filename = extract_filename_from_response(response, url)
+            dest_path = dest_dir / original_filename
+
+            # Check if file already exists
+            if dest_path.exists():
+                logger.warning(
+                    message="File already exists",
+                    extra={"url": url, "path": str(dest_path)},
+                )
+
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             total_bytes = 0
             total_size = int(response.headers.get("content-length", 0))
@@ -147,7 +228,7 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
                 unit="iB",
                 unit_scale=True,
                 unit_divisor=1024,
-                desc=f"Downloading {dest_path.name}",
+                desc=f"Downloading {original_filename}",
                 file=TqdmToLoguru(logger.info) if settings.is_running_on_airflow else sys.stderr,
                 leave=False,  # disappears when complete
                 # dynamic_ncols=True,
@@ -170,12 +251,18 @@ def download_to_file(url: str, dest_path: Path) -> DownloadResult:
                 "Download completed",
                 extra={
                     "path": str(dest_path),
+                    "original_filename": original_filename,
                     "size_mib": round(total_bytes / (1024**2), 2),
                     "sha256": sha256_result,
                 },
             )
 
-            return DownloadResult(path=dest_path, sha256=sha256_result, size_mib=total_bytes)
+            return DownloadResult(
+                path=dest_path,
+                sha256=sha256_result,
+                size_mib=total_bytes,
+                original_filename=original_filename,
+            )
 
 
 # =============================================================================
@@ -239,7 +326,7 @@ def validate_sqlite_header(path: Path) -> None:
 def extract_7z(
     archive_path: Path,
     target_filename: str,
-    dest_path: Path,
+    dest_dir: Path,
     validate_sqlite: bool = True,
 ) -> ExtractionInfo:
     """Extract a specific file from a 7z archive.
@@ -249,12 +336,13 @@ def extract_7z(
     use PipelineDownloader.extract_archive() instead.
 
     Searches for target_filename within the archive, extracts it to a
-    temporary directory, then atomically moves it to dest_path.
+    temporary directory, then atomically moves it to the destination directory,
+    preserving the original filename.
 
     Args:
         archive_path: Path to the .7z archive.
         target_filename: Name or suffix of file to extract (handles nested paths).
-        dest_path: Final destination path for extracted file.
+        dest_dir: Directory where the extracted file will be saved.
         validate_sqlite: If True, validate SQLite header after extraction.
 
     Returns:
@@ -318,6 +406,10 @@ def extract_7z(
 
             extracted_file = tmp_dir_path / target_internal_path
 
+            # Compute final destination path (preserve original filename from archive)
+            dest_path = dest_dir / target_filename
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+
             # Atomic move to final destination
             if dest_path.exists():
                 dest_path.unlink()
@@ -364,19 +456,20 @@ def _test_download() -> None:
         "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01/"
         "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01.7"
     )
-    archive_path = settings.data_dir_path / "landing" / "ADMIN-EXPRESS-COG.7z"
-    dest_path = settings.data_dir_path / "landing" / "admin_express_cog.gpkg"
+    landing_dir = settings.data_dir_path / "landing" / "test_admin_express"
 
     # Download
     try:
-        download_result = download_to_file(url, archive_path)
+        download_result = download_to_file(url, landing_dir)
         logger.info(
             "Download succeeded",
             extra={
                 "archive_sha256": download_result.sha256,
                 "size_mib": download_result.size_mib,
+                "original_filename": download_result.original_filename,
             },
         )
+        archive_path = download_result.path
     except httpx.HTTPStatusError as e:
         logger.error(
             f"Download failed. Server returned code: {e.response.status_code}",
@@ -402,7 +495,7 @@ def _test_download() -> None:
         file_info = extract_7z(
             archive_path=archive_path,
             target_filename="ADE-COG_4-0_GPKG_WGS84G_FRA-ED2025-01-01.gpkg",
-            dest_path=dest_path,
+            dest_dir=landing_dir,
             validate_sqlite=True,
         )
         logger.info(

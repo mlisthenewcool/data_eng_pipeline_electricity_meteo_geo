@@ -433,12 +433,14 @@ def create_common_tasks(  # noqa: PLR0915
         """
         download_result = AirflowTaskAdapter.from_xcom_download(download_data)
 
-        # TODO: For non-archive files, create ExtractionResult (no actual extraction)
+        # For non-archive files, create ExtractionResult (no actual extraction)
+        # The download result already has the original filename from the server
         extract_result = ExtractionResult(
             path=download_result.path,
             size_mib=download_result.size_mib,
             extracted_sha256=download_result.sha256,
             archive_sha256=download_result.sha256,  # Same as extracted (no archive)
+            original_filename=download_result.original_filename,  # Preserve from download
         )
 
         # Validate landing
@@ -487,6 +489,7 @@ def create_extract_tasks(dataset: Dataset) -> dict[str, Any]:
             archive_path=archive_path,
             dataset=dataset,
             archive_sha256=download_result.sha256,  # Pass SHA256 explicitly
+            original_filename=download_result.original_filename,  # Pass original filename
         )
 
         # Cleanup archive after successful extraction

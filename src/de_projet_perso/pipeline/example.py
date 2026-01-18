@@ -34,19 +34,22 @@ if __name__ == "__main__":
     # extract
     # ==============================
     if _dataset.source.inner_file is not None:
-        # TODO: should pass DownloadResult directly
+        # Archive extraction path
         _extract_result = PipelineDownloader.extract_archive(
             archive_path=_download_result.path,
             archive_sha256=_download_result.sha256,
             dataset=_dataset,
+            original_filename=_download_result.original_filename,
         )
         logger.info("extract task completed !", extra={"_extract_result": _extract_result})
     else:
+        # Direct download (no extraction needed)
         _extract_result = ExtractionResult(
             path=_download_result.path,
             size_mib=_download_result.size_mib,
             extracted_sha256=_download_result.sha256,
-            archive_sha256=_download_result.sha256,  # TODO: should be none ?
+            archive_sha256=_download_result.sha256,
+            original_filename=_download_result.original_filename,
         )
         logger.info("extract task skipped !", extra={"_extract_result": _extract_result})
 

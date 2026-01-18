@@ -73,6 +73,7 @@ class StageStatus(StrictModel):
     file_size_bytes: int | None = None
     row_count: int | None = None
     columns: list[str] | None = None
+    original_filename: str | None = None  # Original filename from source (landing layer)
 
 
 class RunRecord(StrictModel):

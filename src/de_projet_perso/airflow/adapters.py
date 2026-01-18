@@ -94,6 +94,7 @@ class AirflowTaskAdapter:
             path=Path(data["path"]),
             sha256=str(data["sha256"]),
             size_mib=float(data["size_mib"]),
+            original_filename=str(data["original_filename"]),
         )
 
     @staticmethod
@@ -120,6 +121,7 @@ class AirflowTaskAdapter:
             size_mib=float(data["size_mib"]),
             extracted_sha256=str(data["extracted_sha256"]),
             archive_sha256=str(data["archive_sha256"]),
+            original_filename=str(data["original_filename"]),
         )
 
     @staticmethod
@@ -137,6 +139,7 @@ class AirflowTaskAdapter:
             sha256=str(data["sha256"]),
             size_mib=float(data["size_mib"]),
             archive_sha256=str(data["archive_sha256"]),
+            original_filename=str(data["original_filename"]),
             layer=str(data.get("layer", "landing")),
         )
 

@@ -28,27 +28,29 @@ class PipelineDownloader:
     def download(dataset_name: str, dataset: Dataset) -> DownloadResult:
         """Download source file from URL.
 
+        Downloads to landing directory preserving original filename from server.
+        The filename is extracted from Content-Disposition header or URL path.
+
         Args:
             dataset_name: Dataset identifier
             dataset: Dataset configuration
 
         Returns:
-            DownloadResult with path, sha256, and size
+            DownloadResult with path, sha256, size, and original_filename
         """
         logger.info(f"Downloading {dataset_name}", extra={"url": str(dataset.source.url)})
 
-        dest_path = dataset.get_landing_path()
-        # NOTE: Ensure destination directory exists ? Do we really need this ?
-        # dest_path.parent.mkdir(parents=True, exist_ok=True)
+        # Get landing directory (not file path - preserves original filename)
+        landing_dir = dataset.get_landing_dir()
 
         return download_to_file(
             url=dataset.source.url_as_str,
-            dest_path=dest_path,
+            dest_dir=landing_dir,
         )
 
     @staticmethod
     def extract_archive(
-        archive_path: Path, dataset: Dataset, archive_sha256: str
+        archive_path: Path, dataset: Dataset, archive_sha256: str, original_filename: str
     ) -> ExtractionResult:
         """Extract archive if format requires it and recalculate SHA256.
 
@@ -65,9 +67,10 @@ class PipelineDownloader:
             archive_path: Path to archive file (or direct file if not archive)
             dataset: Dataset configuration
             archive_sha256: SHA256 of the downloaded archive (propagated from download)
+            original_filename: Original filename from download (for non-archive pass-through)
 
         Returns:
-            ExtractionResult with extracted file info and dual SHA256 tracking
+            ExtractionResult with extracted file info, dual SHA256 tracking, and original filename
 
         Raises:
             ValueError: If archive format requires inner_file but none specified
@@ -86,12 +89,14 @@ class PipelineDownloader:
                 size_mib=archive_path.stat().st_size / (1024**2) if archive_path.exists() else 0,
                 extracted_sha256=archive_sha256,  # Same as archive (no extraction)
                 archive_sha256=archive_sha256,
+                original_filename=original_filename,  # Preserve from download
             )
 
         if dataset.source.inner_file is None:
             raise ValueError(f"inner_file required for archive format: {dataset.source.format}")
 
-        dest_path = dataset.get_landing_path()
+        # Extract to same directory as archive (preserves directory structure)
+        landing_dir = archive_path.parent
 
         logger.info(
             "Extracting archive",
@@ -102,8 +107,8 @@ class PipelineDownloader:
         file_info = extract_7z(
             archive_path=archive_path,
             target_filename=dataset.source.inner_file,
-            dest_path=dest_path,
-            validate_sqlite=dest_path.suffix == ".gpkg",
+            dest_dir=landing_dir,
+            validate_sqlite=Path(dataset.source.inner_file).suffix == ".gpkg",
         )
 
         # Assemble ExtractionResult with full traceability
@@ -114,6 +119,7 @@ class PipelineDownloader:
                 "size_mib": file_info.size_mib,
                 "extracted_sha256": file_info.sha256,
                 "archive_sha256": archive_sha256,
+                "original_filename": dataset.source.inner_file,
             },
         )
 
@@ -122,6 +128,7 @@ class PipelineDownloader:
             size_mib=file_info.size_mib,
             extracted_sha256=file_info.sha256,  # From extracted file
             archive_sha256=archive_sha256,  # Propagated from download
+            original_filename=dataset.source.inner_file,  # Original name from archive
         )
 
     @staticmethod
@@ -130,12 +137,13 @@ class PipelineDownloader:
 
         The landing layer contains the raw file ready for transformation.
         This validation ensures the file exists and is ready for bronze conversion.
+        Original filenames are preserved for audit trail and traceability.
 
         Args:
             extraction_result: Result from extraction step (contains file path and SHA256s)
 
         Returns:
-            LandingResult with validated file metadata
+            LandingResult with validated file metadata and original filename
 
         Raises:
             FileNotFoundError: If expected file does not exist
@@ -147,6 +155,7 @@ class PipelineDownloader:
             "File saved to landing",
             extra={
                 "path": str(extraction_result.path),
+                "original_filename": extraction_result.original_filename,
                 "size_mib": extraction_result.size_mib,
                 "sha256": extraction_result.extracted_sha256,
             },
@@ -157,4 +166,5 @@ class PipelineDownloader:
             sha256=extraction_result.extracted_sha256,  # Use extracted file SHA256
             size_mib=extraction_result.size_mib,
             archive_sha256=extraction_result.archive_sha256,  # Propagate for traceability
+            original_filename=extraction_result.original_filename,  # Preserve original name
         )

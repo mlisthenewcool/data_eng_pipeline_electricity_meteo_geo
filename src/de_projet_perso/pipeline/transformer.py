@@ -30,13 +30,16 @@ class PipelineTransformer:
         """Convert landing file to Parquet with normalized column names.
 
         Bronze layer transformations:
-        1. Read raw file (GeoPackage, Parquet, JSON, etc.)
-        2. Normalize column names to snake_case
-        3. Apply custom transformations if registered
-        4. Write to versioned Parquet file
+        1. Read raw file from landing (preserves original filename)
+        2. Apply custom transformations (normalize columns, filter, etc.)
+        3. Write to standardized bronze Parquet file (naming convention applied here)
+
+        This is where the transition from original filenames (landing) to
+        standardized naming (bronze/silver) happens.
 
         Args:
-            landing_result: Result from landing validation (contains file path and SHA256s)
+            landing_result: Result from landing validation
+                (contains actual file path with original name)
             dataset_name: Dataset identifier
             dataset: Dataset configuration
 
@@ -44,19 +47,23 @@ class PipelineTransformer:
             BronzeResult with bronze file info and propagated SHA256s
 
         Raises:
-            ValueError: If source format is unsupported
+            NotImplementedError: If no bronze transformation is registered
         """
-        landing_path = landing_result.path  # TODO: replace by get_storage_path
+        # Use actual landing file path (with original filename preserved)
+        landing_path = landing_result.path
+
+        # Generate standardized bronze path (naming convention applied here)
         bronze_path = dataset.get_bronze_path()
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
             f"Converting to bronze for {dataset_name}",
-            extra={"source": landing_path, "dest": bronze_path},
+            extra={
+                "source": str(landing_path),
+                "original_filename": landing_result.original_filename,
+                "dest": str(bronze_path),
+            },
         )
-
-        # # Normalize column names to snake_case (always applied)
-        # df = df.rename(lambda col: col.lower().replace(" ", "_").replace("-", "_"))
 
         # Apply dataset-specific bronze transformation
         transforms = get_bronze_transform(dataset_name)
@@ -67,9 +74,11 @@ class PipelineTransformer:
 
         logger.info(
             f"Applying bronze transformations for {dataset_name}",
-            extra={"dataset": dataset},
+            extra={"landing_path": str(landing_path)},
         )
-        df = transforms(dataset)
+
+        # Pass both dataset config and actual landing file path
+        df = transforms(dataset, landing_path)
         df.write_parquet(bronze_path)
 
         columns = df.columns
@@ -77,7 +86,11 @@ class PipelineTransformer:
 
         logger.info(
             f"Bronze conversion complete for {dataset_name}",
-            extra={"rows": row_count, "columns": len(columns)},
+            extra={
+                "rows": row_count,
+                "columns": len(columns),
+                "bronze_path": str(bronze_path),
+            },
         )
 
         return BronzeResult(
