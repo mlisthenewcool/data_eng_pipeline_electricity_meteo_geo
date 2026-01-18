@@ -96,20 +96,19 @@ class TqdmToLoguru:
         pass
 
 
-def extract_filename_from_response(response: httpx.Response, url: str) -> str:
+def extract_filename_from_response(response: httpx.Response, url: str) -> str | None:
     """Extract original filename from HTTP response or URL.
 
     Priority order:
     1. Content-Disposition header (most reliable - server specifies filename)
     2. URL path basename (fallback - extract from URL path)
-    3. "download.bin" (last resort if both methods fail)
 
     Args:
         response: HTTP response object from httpx
         url: Original request URL
 
     Returns:
-        Extracted filename (sanitized for filesystem use)
+        Extracted filename (sanitized for filesystem use) if found, None otherwise.
 
     Example:
         >>> response.headers = {"Content-Disposition": "attachment; filename=data.parquet"}
@@ -120,6 +119,8 @@ def extract_filename_from_response(response: httpx.Response, url: str) -> str:
         >>> extract_filename_from_response(response, "https://example.com/export/file.csv")
         'file.csv'
     """
+    # TODO: response or url should never be None
+
     # Try Content-Disposition header first
     content_disp = response.headers.get("content-disposition", "")
     if content_disp:
@@ -128,7 +129,9 @@ def extract_filename_from_response(response: httpx.Response, url: str) -> str:
         #           "attachment; filename*=UTF-8''data%20file.csv"
 
         # Try standard filename parameter
-        match = re.search(r'filename="?([^";\n]+)"?', content_disp)
+        regex = r'filename=["\']?([^"\';\n]+)["\']?'
+        # regex_simple = r'filename="?([^";\n]+)"?'
+        match = re.search(regex, content_disp)
         if match:
             filename = match.group(1).strip()
             # Remove any path separators for security
@@ -141,26 +144,20 @@ def extract_filename_from_response(response: httpx.Response, url: str) -> str:
                 return filename
 
     # Fallback: extract from URL path
-    try:
-        parsed = urlparse(url)
-        path_parts = parsed.path.rstrip("/").split("/")
-        if path_parts:
-            # Get last non-empty part, decode URL encoding
-            filename = unquote(path_parts[-1])
-            # Remove query parameters if accidentally included
-            filename = filename.split("?")[0]
-            filename = Path(filename).name
-            if filename and filename != "." and "." in filename:
-                logger.debug(
-                    "Extracted filename from URL path", extra={"filename": filename, "url": url}
-                )
-                return filename
-    except Exception as e:
-        logger.warning("Failed to extract filename from URL", extra={"url": url, "error": str(e)})
+    url_path = urlparse(url).path
+    if url_path:
+        # decode URL encoding, unquote handles %20 and other special chars
+        filename = Path(unquote(url_path)).name
 
-    # Last resort: generic name
-    logger.warning("Could not extract filename, using default", extra={"url": url})
-    return "download.bin"
+        # check if it's an actual file and not a folder
+        if filename and filename != "." and "." in filename:
+            logger.debug(
+                "Extracted filename from URL path", extra={"filename": filename, "url": url}
+            )
+            return filename
+
+    logger.warning("Could not extract filename", extra={"url": url})
+    return None
 
 
 def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
@@ -185,14 +182,14 @@ def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
         httpx.TimeoutException: If request times out.
 
     Example:
-        result = download_to_file(
-            "https://example.com/data.7z",
-            Path("/data/landing/ign_contours_iris")
-        )
-        # File saved to: /data/landing/ign_contours_iris/CONTOURS-IRIS_3-0...7z
-        print(f"Downloaded {result.original_filename}: {result.size_mib} MiB")
+        >>> result = download_to_file(
+        ...    "https://example.com/data.7z",
+        ...    Path("/data/landing/ign_contours_iris")
+        ...)
+        ... # File saved to: /data/landing/ign_contours_iris/CONTOURS-IRIS_3-0...7z
+        ... print(f"Downloaded {result.original_filename}: {result.size_mib} MiB")
     """
-    logger.info("Starting download", extra={"url": url, "dest_dir": str(dest_dir)})
+    logger.debug("Starting download", extra={"url": url, "dest_dir": str(dest_dir)})
 
     timeout = httpx.Timeout(  # TODO, documenter & ajouter arguments write/pool
         timeout=settings.download_timeout_total,
@@ -208,9 +205,11 @@ def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
 
             # Extract original filename from response headers or URL
             original_filename = extract_filename_from_response(response, url)
+            if original_filename is None:
+                # TODO: custom error or fallback name
+                raise Exception("Could not extract original filename")
             dest_path = dest_dir / original_filename
 
-            # Check if file already exists
             if dest_path.exists():
                 logger.warning(
                     message="File already exists",
@@ -247,7 +246,7 @@ def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
 
             sha256_result = hasher.hexdigest
 
-            logger.info(
+            logger.debug(
                 "Download completed",
                 extra={
                     "path": str(dest_path),
@@ -356,7 +355,7 @@ def extract_7z(
     if not archive_path.exists():
         raise ArchiveNotFoundError(archive_path)
 
-    logger.info(
+    logger.debug(
         "Starting extraction",
         extra={"archive": archive_path.name, "target": target_filename},
     )
@@ -374,10 +373,7 @@ def extract_7z(
             except StopIteration:
                 raise FileNotFoundInArchiveError(target_filename, archive_path)
 
-            logger.info(
-                "Found target in archive",
-                extra={"internal_path": target_internal_path},
-            )
+            logger.debug(f"Found target in archive: {target_internal_path}")
 
             # Récupérer les infos du fichier pour connaître sa taille décompressée
             target_info = next(
@@ -428,7 +424,7 @@ def extract_7z(
             extracted_file_hash = FileHasher.hash_file(dest_path)
             size_mib = round(dest_path.stat().st_size / 1024**2, 2)
 
-            logger.info(
+            logger.debug(
                 "Extraction completed",
                 extra={
                     "path": str(dest_path),
@@ -442,77 +438,3 @@ def extract_7z(
                 size_mib=size_mib,
                 sha256=extracted_file_hash,
             )
-
-
-# =============================================================================
-# CLI entry point for testing
-# =============================================================================
-
-
-def _test_download() -> None:
-    """Test download with IGN ADMIN-EXPRESS-COG dataset."""
-    url = (
-        "https://data.geopf.fr/telechargement/download/ADMIN-EXPRESS-COG/"
-        "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01/"
-        "ADMIN-EXPRESS-COG_4-0__GPKG_WGS84G_FRA_2025-01-01.7"
-    )
-    landing_dir = settings.data_dir_path / "landing" / "test_admin_express"
-
-    # Download
-    try:
-        download_result = download_to_file(url, landing_dir)
-        logger.info(
-            "Download succeeded",
-            extra={
-                "archive_sha256": download_result.sha256,
-                "size_mib": download_result.size_mib,
-                "original_filename": download_result.original_filename,
-            },
-        )
-        archive_path = download_result.path
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            f"Download failed. Server returned code: {e.response.status_code}",
-            extra={
-                "message": e.response.reason_phrase,
-                "url": str(e.request.url),
-            },
-        )
-        sys.exit(-1)
-    except httpx.TimeoutException as e:
-        logger.error("Download failed. Connection timed out", extra={"more_infos": e})
-        sys.exit(-1)
-    except httpx.HTTPError as e:
-        logger.error("Download failed. Network or request error", extra={"more_infos": e})
-        sys.exit(-1)
-    except Exception as e:
-        # TODO, simuler disque plein ?
-        logger.critical("Download failed. Unexpected error", extra={"more_infos": str(e)})
-        sys.exit(-1)
-
-    # Extract
-    try:
-        file_info = extract_7z(
-            archive_path=archive_path,
-            target_filename="ADE-COG_4-0_GPKG_WGS84G_FRA-ED2025-01-01.gpkg",
-            dest_dir=landing_dir,
-            validate_sqlite=True,
-        )
-        logger.info(
-            "Extraction succeeded",
-            extra={
-                "extracted_file_sha256": file_info.sha256,
-                "archive_sha256": download_result.sha256,
-            },
-        )
-    except (
-        ArchiveNotFoundError,
-        FileNotFoundInArchiveError,
-        FileIntegrityError,
-    ) as e:
-        logger.error("Extraction failed", extra={"error": str(e)})
-        sys.exit(-1)
-
-
-if __name__ == "__main__":
-    _test_download()

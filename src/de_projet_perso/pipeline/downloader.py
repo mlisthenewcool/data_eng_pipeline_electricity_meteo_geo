@@ -25,21 +25,18 @@ class PipelineDownloader:
     """Download and extraction logic for pipeline data sources."""
 
     @staticmethod
-    def download(dataset_name: str, dataset: Dataset) -> DownloadResult:
+    def download(dataset: Dataset) -> DownloadResult:
         """Download source file from URL.
 
         Downloads to landing directory preserving original filename from server.
         The filename is extracted from Content-Disposition header or URL path.
 
         Args:
-            dataset_name: Dataset identifier
             dataset: Dataset configuration
 
         Returns:
             DownloadResult with path, sha256, size, and original_filename
         """
-        logger.info(f"Downloading {dataset_name}", extra={"url": str(dataset.source.url)})
-
         # Get landing directory (not file path - preserves original filename)
         landing_dir = dataset.get_landing_dir()
 
@@ -50,24 +47,21 @@ class PipelineDownloader:
 
     @staticmethod
     def extract_archive(
-        archive_path: Path, dataset: Dataset, archive_sha256: str, original_filename: str
+        archive_path: Path,
+        dataset: Dataset,
+        archive_sha256: str,
     ) -> ExtractionResult:
-        """Extract archive if format requires it and recalculate SHA256.
+        """Extract archive and recalculate SHA256.
 
         For archive formats (7z):
             1. Extract the target file from archive
             2. Recalculate SHA256 of extracted file (detects corruption during extraction)
             3. Return both archive SHA256 (for traceability) and extracted SHA256
 
-        For non-archive formats:
-            1. Pass through the original file
-            2. Both SHA256 values are identical (same file)
-
         Args:
             archive_path: Path to archive file (or direct file if not archive)
             dataset: Dataset configuration
             archive_sha256: SHA256 of the downloaded archive (propagated from download)
-            original_filename: Original filename from download (for non-archive pass-through)
 
         Returns:
             ExtractionResult with extracted file info, dual SHA256 tracking, and original filename
@@ -76,21 +70,9 @@ class PipelineDownloader:
             ValueError: If archive format requires inner_file but none specified
             FileNotFoundError: If extracted file doesn't exist after extraction
         """
-        # Skip if not an archive format
         if not dataset.source.format.is_archive:
-            logger.info(
-                f"No extraction needed for {dataset.source.format}",
-                extra={"format": str(dataset.source.format)},
-            )
-            # Not an archive: the downloaded file IS the final file
-            # Both SHA256 values are the same
-            return ExtractionResult(
-                path=archive_path,
-                size_mib=archive_path.stat().st_size / (1024**2) if archive_path.exists() else 0,
-                extracted_sha256=archive_sha256,  # Same as archive (no extraction)
-                archive_sha256=archive_sha256,
-                original_filename=original_filename,  # Preserve from download
-            )
+            logger.warning(f"Trying to extract a non-archive format: {dataset.source.format.value}")
+            raise Exception  # TODO exception spécifique
 
         if dataset.source.inner_file is None:
             raise ValueError(f"inner_file required for archive format: {dataset.source.format}")
@@ -98,12 +80,6 @@ class PipelineDownloader:
         # Extract to same directory as archive (preserves directory structure)
         landing_dir = archive_path.parent
 
-        logger.info(
-            "Extracting archive",
-            extra={"archive": archive_path.name, "target": dataset.source.inner_file},
-        )
-
-        # Extract file from archive (low-level utility)
         file_info = extract_7z(
             archive_path=archive_path,
             target_filename=dataset.source.inner_file,
@@ -111,8 +87,7 @@ class PipelineDownloader:
             validate_sqlite=Path(dataset.source.inner_file).suffix == ".gpkg",
         )
 
-        # Assemble ExtractionResult with full traceability
-        logger.info(
+        logger.debug(
             "Extraction completed with integrity check",
             extra={
                 "extracted_file": file_info.path,
@@ -126,9 +101,9 @@ class PipelineDownloader:
         return ExtractionResult(
             path=file_info.path,
             size_mib=file_info.size_mib,
-            extracted_sha256=file_info.sha256,  # From extracted file
-            archive_sha256=archive_sha256,  # Propagated from download
-            original_filename=dataset.source.inner_file,  # Original name from archive
+            extracted_sha256=file_info.sha256,
+            archive_sha256=archive_sha256,
+            original_filename=dataset.source.inner_file,
         )
 
     @staticmethod

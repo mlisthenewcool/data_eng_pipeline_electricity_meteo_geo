@@ -45,9 +45,9 @@ class Settings(BaseSettings):
     # =========================================================================
     # General config
     # =========================================================================
-    # TODO: LOG_LEVEL should be defined via Docker for consistency.
+    # TODO: LOG_LEVEL should be defined via Docker for consistency with Airflow
     logging_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
-        default="INFO", description="The logger verbosity level"
+        default="DEBUG", description="The logger verbosity level"
     )
 
     # =========================================================================

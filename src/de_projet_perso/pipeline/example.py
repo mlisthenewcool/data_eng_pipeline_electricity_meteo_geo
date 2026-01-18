@@ -10,7 +10,16 @@ This script demonstrates the complete data pipeline flow:
 Run with: PYTHONPATH=src uv run python src/de_projet_perso/pipeline/example.py
 """
 
+import sys
+
+import httpx
+
 from de_projet_perso.core.data_catalog import DataCatalog
+from de_projet_perso.core.exceptions import (
+    ArchiveNotFoundError,
+    FileIntegrityError,
+    FileNotFoundInArchiveError,
+)
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.downloader import PipelineDownloader
@@ -18,32 +27,64 @@ from de_projet_perso.pipeline.results import ExtractionResult
 from de_projet_perso.pipeline.transformer import PipelineTransformer
 
 if __name__ == "__main__":
+    # ===================================================================================
+    # /!\ DO NOT USE sys.exit(-1) WHEN RUNNING ON AIRFLOW. Let Airflow handle exceptions.
+    # ===================================================================================
     _catalog = DataCatalog.load(settings.data_catalog_file_path)
 
     _dataset_name = "ign_contours_iris"
     _dataset = _catalog.get_dataset(_dataset_name)
 
     # ==============================
-    # download
+    # download task
     # ==============================
-    _download_result = PipelineDownloader.download(_dataset_name, _dataset)
+    logger.info("=" * 80)
+    try:
+        _download_result = PipelineDownloader.download(_dataset)
+    except httpx.HTTPStatusError as e:
+        logger.exception(
+            f"Download failed. Server returned code: {e.response.status_code}",
+            extra={
+                "message": e.response.reason_phrase,
+                "url": str(e.request.url),
+            },
+        )
+        sys.exit(-1)
+    except httpx.TimeoutException as e:
+        logger.exception("Download failed. Connection timed out", extra={"more_infos": e})
+        sys.exit(-1)
+    except httpx.HTTPError as e:
+        logger.exception("Download failed. Network or request error", extra={"more_infos": e})
+        sys.exit(-1)
+    except Exception as e:
+        # TODO: simuler disque plein ?
+        logger.critical("Download failed. Unexpected error", extra={"more_infos": str(e)})
+        sys.exit(-1)
+
     logger.info("download task completed !", extra={"_download_result": _download_result})
     logger.info("=" * 80)
 
     # ==============================
-    # extract
+    # extract task (optional)
     # ==============================
     if _dataset.source.inner_file is not None:
-        # Archive extraction path
-        _extract_result = PipelineDownloader.extract_archive(
-            archive_path=_download_result.path,
-            archive_sha256=_download_result.sha256,
-            dataset=_dataset,
-            original_filename=_download_result.original_filename,
-        )
+        try:
+            _extract_result = PipelineDownloader.extract_archive(
+                archive_path=_download_result.path,
+                archive_sha256=_download_result.sha256,
+                dataset=_dataset,
+            )
+        except (
+            ArchiveNotFoundError,
+            FileNotFoundInArchiveError,
+            FileIntegrityError,
+        ) as e:
+            logger.exception("Extraction failed", extra={"error": str(e)})
+            sys.exit(-1)
+
         logger.info("extract task completed !", extra={"_extract_result": _extract_result})
     else:
-        # Direct download (no extraction needed)
+        # TODO: retirer ce besoin, on devrait pouvoir passer à la tâche bronze directement
         _extract_result = ExtractionResult(
             path=_download_result.path,
             size_mib=_download_result.size_mib,
@@ -79,4 +120,3 @@ if __name__ == "__main__":
         bronze_result=_bronze_result, dataset_name=_dataset_name, dataset=_dataset
     )
     logger.info("bronze_to_silver task completed !", extra={"_silver_result": _silver_result})
-    logger.info("=" * 80)

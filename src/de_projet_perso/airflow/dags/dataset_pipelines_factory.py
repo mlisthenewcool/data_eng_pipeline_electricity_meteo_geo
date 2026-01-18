@@ -252,7 +252,7 @@ def create_common_tasks(  # noqa: PLR0915
         Returns:
             Dict serialized for XCom (DownloadResult → dict)
         """
-        result = PipelineDownloader.download(dataset_name=dataset_name, dataset=dataset)
+        result = PipelineDownloader.download(dataset)
         return AirflowTaskAdapter.to_xcom(result)
 
     @task(
@@ -489,22 +489,22 @@ def create_extract_tasks(dataset: Dataset) -> dict[str, Any]:
             archive_path=archive_path,
             dataset=dataset,
             archive_sha256=download_result.sha256,  # Pass SHA256 explicitly
-            original_filename=download_result.original_filename,  # Pass original filename
         )
 
         # Cleanup archive after successful extraction
-        try:
-            if archive_path.exists() and archive_path.suffix == ".7z":
-                archive_path.unlink()
-                logger.info(
-                    "Removed archive after successful extraction",
-                    extra={"archive": str(archive_path)},
-                )
-        except Exception as e:
-            logger.warning(
-                "Failed to remove archive (non-critical)",
-                extra={"archive": str(archive_path), "error": str(e)},
-            )
+        # TODO: should be done after a successful bronze task run
+        # try:
+        #     if archive_path.exists() and archive_path.suffix == ".7z":
+        #         archive_path.unlink()
+        #         logger.info(
+        #             "Removed archive after successful extraction",
+        #             extra={"archive": str(archive_path)},
+        #         )
+        # except Exception as e:
+        #     logger.warning(
+        #         "Failed to remove archive (non-critical)",
+        #         extra={"archive": str(archive_path), "error": str(e)},
+        #     )
 
         # Validate landing
         landing_result = PipelineDownloader.validate_landing(extract_result)

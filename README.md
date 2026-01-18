@@ -66,29 +66,35 @@ Voir [README_DX.md](docs/README_DX.md)
     - [x] trouver un moyen de gérer proprement les archives
         - ~~[ ] ajout inner_path_extension au Dataset ?~~
         - [x] calcul avec `Path(...).with_suffix(...)`
-    - [ ] ajout d'un type pour le nom des layers (StrEnum)
-    - [ ] résoudre les incohérences de nommage de fichiers (avant landing garde les mêmes noms que sur le serveur,
+    - [x] résoudre les incohérences de nommage de fichiers (avant landing garde les mêmes noms que sur le serveur,
       ce n'est qu'à partir de la couche bronze qu'on renomme avec nos conventions)
 
 - [ ] simplifier pipeline
-    - [ ] cohérence des arguments
     - [x] passage à 2 DAGs spécifiques (un avec et un sans extraction d'archive)
     - [ ] retirer tâche "landing" qui est juste là pour les XCom ?
     - [ ] ajouter class PipelineContext qui réduit le nombre de passages d'arguments et centralise l'info
     - [ ] documenter choix des Serializer, des transformations et du déroulement logique du pipeline
-    - [ ] cohérence avec les sha256
     - [ ] créer exemple complet pipeline sans Airflow
+    - [ ] cohérence des arguments passés entre chaque tâche
 
-- [ ] check_should_run doit arriver contrôle de la cohérence ?
+- [ ] check_should_run doit arriver après contrôle de la cohérence de l'état actuel ? même tâche ?
     - → check_state
         - → si ok → check_should_run
         - → sinon → heal_state
             - → download_data → ...
 
-- [ ] ajout mécanisme pour vérifier la "fraîcheur" des données (requête HEAD si possible, ou comparaison hash_sha256)
+- [ ] ajout mécanisme pour vérifier la "fraîcheur" des données
+    - [ ] requête HEAD si possible
+    - [ ] comparaison hash_sha256
 
 - [ ] complexité du state management: on gère un système indépendant + celui de Airflow
     - [ ] vérifier qu'on ne puisse pas tout passer sous Airflow (vérifier sha256 pour sûr, autre chose ?)
+
+- [ ] cohérence de la gestion des exceptions & des logs associés
+    - [ ] choix stratégie (fonctions Pipeline ? tasks ? fonctions bas-niveau ?)
+    - [ ] documentation de la solution choisie
+
+- [x] cohérence entre ExtractionInfo et ExtractionResult
 
 ## Priorité 2
 
@@ -105,6 +111,9 @@ Voir [README_DX.md](docs/README_DX.md)
 ## Priorité 3
 
 - [ ] modifier les raise ... from e
+
+- [ ] ajout d'un type pour le nom des layers (StrEnum)
+- [ ] uniformiser les chemins entre landing & les autres couches
 
 - [ ] mettre en place politique de rétention pour la couche bronze
 - [ ] ajout des documentations des données avec les anciens fichiers
