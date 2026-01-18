@@ -14,7 +14,6 @@ from pathlib import Path
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.results import DownloadResult, ExtractionResult, LandingResult
 from de_projet_perso.utils.downloader import (
     download_to_file,
@@ -38,8 +37,7 @@ class PipelineDownloader:
         """
         logger.info(f"Downloading {dataset_name}", extra={"url": str(dataset.source.url)})
 
-        dest_path = settings.data_dir_path / dataset.get_storage_path("landing")
-
+        dest_path = dataset.get_landing_path()
         # NOTE: Ensure destination directory exists ? Do we really need this ?
         # dest_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -93,11 +91,7 @@ class PipelineDownloader:
         if dataset.source.inner_file is None:
             raise ValueError(f"inner_file required for archive format: {dataset.source.format}")
 
-        # TODO: improve that logic
-        special_landing_storage_for_extraction = dataset.get_storage_path("landing").with_suffix(
-            ".gpkg"
-        )
-        dest_path = settings.data_dir_path / special_landing_storage_for_extraction
+        dest_path = dataset.get_landing_path()
 
         logger.info(
             "Extracting archive",

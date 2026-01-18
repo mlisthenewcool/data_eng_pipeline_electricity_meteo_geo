@@ -1,13 +1,10 @@
 """Transformations for IGN Contours IRIS dataset."""
 
-from pathlib import Path
-
 import duckdb
 import polars as pl
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.transformations import register_bronze, register_silver
 
 
@@ -25,11 +22,7 @@ def transform_bronze_ign_iris(dataset: Dataset) -> pl.DataFrame:
     """
     # GeoPackage needs special handling with DuckDB
 
-    # TODO: fix
-    special_landing_storage_for_extraction = Path(
-        str(dataset.get_storage_path("landing")).split(".")[0] + ".gpkg"
-    )
-    storage_path = settings.data_dir_path / special_landing_storage_for_extraction
+    landing_path = dataset.get_landing_path()
 
     conn = duckdb.connect()
     conn.execute("INSTALL spatial; LOAD spatial;")
@@ -42,7 +35,7 @@ def transform_bronze_ign_iris(dataset: Dataset) -> pl.DataFrame:
         FROM st_read(?, layer = 'contours_iris')
     """
     logger.info("duckdb spatial query started")
-    df = conn.execute(query, parameters=[str(storage_path)]).pl()
+    df = conn.execute(query, parameters=[str(landing_path)]).pl()
     logger.info("duckdb spatial query ended")
     return df.filter(pl.col("code_iris").is_not_null())
 
@@ -65,7 +58,7 @@ def transform_silver_ign_iris(dataset: Dataset) -> pl.DataFrame:
         Silver layer DataFrame
     """
     # Read bronze layer file
-    bronze_path = settings.data_dir_path / dataset.get_storage_path("bronze")
+    bronze_path = dataset.get_bronze_path()
     df = pl.read_parquet(bronze_path)
 
     # For now, pass-through (no transformation needed)

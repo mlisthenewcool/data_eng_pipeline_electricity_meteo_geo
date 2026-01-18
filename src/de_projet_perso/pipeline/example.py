@@ -28,6 +28,7 @@ if __name__ == "__main__":
     # ==============================
     _download_result = PipelineDownloader.download(_dataset_name, _dataset)
     logger.info("download task completed !", extra={"_download_result": _download_result})
+    logger.info("=" * 80)
 
     # ==============================
     # extract
@@ -49,12 +50,15 @@ if __name__ == "__main__":
         )
         logger.info("extract task skipped !", extra={"_extract_result": _extract_result})
 
+    logger.info("=" * 80)
+
     # ==============================
     # merge results from either download or extract
     # ==============================
     # TODO: is that the correct way ?
     _landing_result = PipelineDownloader.validate_landing(_extract_result)
     logger.info("landing task completed !", extra={"_landing_result": _landing_result})
+    logger.info("=" * 80)
 
     # ==============================
     # landing_to_bronze
@@ -63,6 +67,7 @@ if __name__ == "__main__":
         landing_result=_landing_result, dataset_name=_dataset_name, dataset=_dataset
     )
     logger.info("landing_to_bronze task completed !", extra={"_bronze_result": _bronze_result})
+    logger.info("=" * 80)
 
     # ==============================
     # bronze_to_silver
@@ -71,3 +76,4 @@ if __name__ == "__main__":
         bronze_result=_bronze_result, dataset_name=_dataset_name, dataset=_dataset
     )
     logger.info("bronze_to_silver task completed !", extra={"_silver_result": _silver_result})
+    logger.info("=" * 80)

@@ -16,7 +16,6 @@ import polars as pl
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.results import BronzeResult, LandingResult, SilverResult
 from de_projet_perso.pipeline.transformations import get_bronze_transform, get_silver_transform
 
@@ -48,8 +47,7 @@ class PipelineTransformer:
             ValueError: If source format is unsupported
         """
         landing_path = landing_result.path  # TODO: replace by get_storage_path
-        # settings.data_dir_path / dataset.get_storage_path("landing")
-        bronze_path = settings.data_dir_path / dataset.get_storage_path("bronze")
+        bronze_path = dataset.get_bronze_path()
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
@@ -111,7 +109,7 @@ class PipelineTransformer:
         Returns:
             SilverResult with silver file info and propagated SHA256s
         """
-        silver_path = settings.data_dir_path / dataset.get_storage_path("silver")
+        silver_path = dataset.get_silver_path()
         silver_path.parent.mkdir(parents=True, exist_ok=True)
         bronze_path = bronze_result.path  # TODO: replace
 

@@ -49,6 +49,7 @@ from pydantic import (
 
 from de_projet_perso.core.exceptions import DatasetNotFoundError, InvalidCatalogError
 from de_projet_perso.core.models import StrictModel
+from de_projet_perso.core.settings import settings
 
 # Compiled regex for version validation (performance optimization)
 _VERSION_PATTERN = re.compile(r"\d{4}_\d{2}_\d{2}")
@@ -405,7 +406,7 @@ class Dataset(StrictModel):
                 raise ValueError(f"storage path must contain '{placeholder}' placeholder")
         return v
 
-    def get_storage_path(self, layer: str) -> Path:
+    def _get_storage_path(self, layer: str) -> Path:
         """Generate storage path for a specific medallion layer.
 
         Substitutes the {layer} and {version} placeholders in the storage
@@ -433,7 +434,25 @@ class Dataset(StrictModel):
             raise ValueError(
                 f"Invalid layer '{layer}'. Must be one of: {', '.join(sorted(VALID_LAYERS))}"
             )
-        return Path(self.storage.format(layer=layer, version=self.ingestion.version))
+        return settings.data_dir_path / self.storage.format(
+            layer=layer, version=self.ingestion.version
+        )
+
+    def get_landing_path(self) -> Path:
+        """TODO."""
+        if self.source.inner_file:
+            inner_file_file_extension = Path(self.source.inner_file).suffix
+            return self._get_storage_path(layer="landing").with_suffix(inner_file_file_extension)
+
+        return self._get_storage_path(layer="landing")
+
+    def get_bronze_path(self) -> Path:
+        """TODO."""
+        return self._get_storage_path(layer="bronze")
+
+    def get_silver_path(self) -> Path:
+        """TODO."""
+        return self._get_storage_path(layer="silver")
 
 
 def format_pydantic_errors(pydantic_errors: ValidationError) -> dict[str, str]:
@@ -559,7 +578,6 @@ if __name__ == "__main__":
     import sys
 
     from de_projet_perso.core.logger import logger
-    from de_projet_perso.core.settings import settings
 
     try:
         _catalog = DataCatalog.load(settings.data_catalog_file_path)
@@ -577,6 +595,6 @@ if __name__ == "__main__":
                 "provider": _dataset.source.provider,
                 "version": _dataset.ingestion.version,
                 "format": _dataset.source.format.value,
-                "storage (landing)": _dataset.get_storage_path(layer="landing"),
+                "storage (landing)": _dataset.get_landing_path(),
             },
         )

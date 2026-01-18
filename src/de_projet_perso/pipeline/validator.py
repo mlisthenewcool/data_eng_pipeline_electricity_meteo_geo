@@ -38,11 +38,7 @@ class PipelineValidator:
     """Validation logic for pipeline state coherence."""
 
     @staticmethod
-    def validate_state_coherence(
-        dataset_name: str,
-        dataset: Dataset,
-        data_dir: Path,
-    ) -> ValidationResult:
+    def validate_state_coherence(dataset_name: str, dataset: Dataset) -> ValidationResult:
         """Verify state file matches reality on disk.
 
         This validation ensures that the state recorded in JSON
@@ -63,7 +59,7 @@ class PipelineValidator:
             ValidationResult with validation status and issues
         """
         state = PipelineStateManager.load(dataset_name)
-        expected_path = data_dir / dataset.get_storage_path("silver")
+        expected_path = dataset.get_silver_path()
 
         result = ValidationResult(
             dataset=dataset_name,

@@ -50,7 +50,7 @@ class PipelineDecisionEngine:
 
         # 2. HEAL - Check if expected files exist
         # TODO: bronze also ?
-        expected_path = data_dir / dataset.get_storage_path("silver")
+        expected_path = dataset.get_silver_path()
         if not expected_path.exists():
             logger.info(
                 "Expected file missing, healing",
@@ -124,7 +124,7 @@ class PipelineDecisionEngine:
         if state is None:
             return PipelineAction.FIRST_RUN
 
-        expected_path = data_dir / dataset.get_storage_path("silver")
+        expected_path = dataset.get_silver_path()
         if not expected_path.exists():
             return PipelineAction.HEAL
 

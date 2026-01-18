@@ -126,7 +126,7 @@ def _create_asset_for_dataset(name: str, dataset: Dataset) -> Asset:
     """
     return Asset(
         name=f"{name}_silver",
-        uri=f"file:///{settings.data_dir_path / dataset.get_storage_path('silver')}",
+        uri=f"file:///{dataset.get_silver_path()}",
         group="data-pipeline",
         extra={
             "provider": dataset.source.provider,
@@ -326,9 +326,7 @@ def create_common_tasks(  # noqa: PLR0915
 
         # 2. Validate coherence
         result = PipelineValidator.validate_state_coherence(
-            dataset_name=dataset_name,
-            dataset=dataset,
-            data_dir=settings.data_dir_path,
+            dataset_name=dataset_name, dataset=dataset
         )
 
         # 3. Branch based on validation result
@@ -679,11 +677,10 @@ def create_archive_dag(
         cleanup = tasks["cleanup_incoherent_state"]()
 
         # 3. Download
-        download = tasks["download_data"]()  # (trigger_rule="none_failed_min_one_success")
+        download = tasks["download_data"]()
 
         # 4. Extraction extra tasks
         extract = tasks["extract_archive"](download)
-        # merge_landing = archive_tasks["merge_landing_results"](extract)
 
         # 5. Transformation
         bronze = tasks["convert_to_bronze"](extract)

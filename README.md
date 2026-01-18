@@ -62,9 +62,13 @@ Voir [README_DX.md](docs/README_DX.md)
 - [x] passage à pydantic-settings
 
 - [ ] corriger les problèmes de résolution de chemin
-    - [ ] calcul dans settings directement
-    - [ ] trouver un moyen de gérer proprement les archives (ajout inner_path_extension au Dataset ?)
+    - [x] calcul dans settings directement
+    - [x] trouver un moyen de gérer proprement les archives
+        - ~~[ ] ajout inner_path_extension au Dataset ?~~
+        - [x] calcul avec `Path(...).with_suffix(...)`
     - [ ] ajout d'un type pour le nom des layers (StrEnum)
+    - [ ] résoudre les incohérences de nommage de fichiers (avant landing garde les mêmes noms que sur le serveur,
+      ce n'est qu'à partir de la couche bronze qu'on renomme avec nos conventions)
 
 - [ ] simplifier pipeline
     - [ ] cohérence des arguments
