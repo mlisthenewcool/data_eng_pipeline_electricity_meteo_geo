@@ -94,8 +94,8 @@ class PipelineDownloader:
             raise ValueError(f"inner_file required for archive format: {dataset.source.format}")
 
         # TODO: improve that logic
-        special_landing_storage_for_extraction = (
-            str(dataset.get_storage_path("landing")).split(".")[0] + ".gpkg"
+        special_landing_storage_for_extraction = dataset.get_storage_path("landing").with_suffix(
+            ".gpkg"
         )
         dest_path = settings.data_dir_path / special_landing_storage_for_extraction
 

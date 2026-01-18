@@ -21,8 +21,6 @@ opencode.jsonc
 
 # TODO: add docs after refactoring
 docs
-# TODO: remove once data_old is merged
-data_old/
 
 # --------------------------------------------------------------
 # https://github.com/github/gitignore/blob/main/Python.gitignore

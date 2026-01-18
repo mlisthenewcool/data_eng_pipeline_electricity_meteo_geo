@@ -27,15 +27,13 @@ Best Practices Applied (Airflow 3.x):
 
 from __future__ import annotations
 
-import traceback
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from airflow.sdk import DAG, Asset, Metadata, dag, get_current_context, task
 
 from de_projet_perso.airflow.adapters import AirflowTaskAdapter
-from de_projet_perso.core.data_catalog import DataCatalog, Dataset
-from de_projet_perso.core.exceptions import InvalidCatalogError
+from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.decision import PipelineDecisionEngine
@@ -50,7 +48,7 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
-# Production Defaults
+# Production Defaults TODO
 # =============================================================================
 
 DEFAULT_ARGS: dict[str, Any] = {
@@ -144,7 +142,10 @@ def _create_asset_for_dataset(name: str, dataset: Dataset) -> Asset:
 # =============================================================================
 
 
-def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  # noqa: PLR0915
+# TODO: typer proprement le retour
+def create_common_tasks(  # noqa: PLR0915
+    dataset_name: str, dataset: Dataset, asset: Asset
+) -> dict[str, Any]:
     """Create all tasks for a dataset pipeline.
 
     This factory approach keeps task definitions close to DAG creation,
@@ -160,51 +161,55 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         Dict of task functions keyed by task_id
     """
 
-    @task.branch(task_id="decide_action")
-    def decide_action_task() -> str:
-        """Branch based on pipeline state.
+    @task.short_circuit(task_id="check_should_run")
+    def check_should_run() -> bool:
+        """Short-circuit the entire pipeline if action is SKIP.
 
-        Returns task_id of next task to execute.
+        This task evaluates the pipeline decision (SKIP/FIRST_RUN/HEAL/RETRY/REFRESH).
+        If the action is SKIP, it logs detailed skip information and returns False,
+        which causes Airflow to skip all downstream tasks.
+
+        Returns:
+            bool: True to continue pipeline, False to skip all downstream tasks
         """
         action = PipelineDecisionEngine.decide_action(dataset_name, dataset, settings.data_dir_path)
 
         if action == PipelineAction.SKIP:
-            return "mark_skipped"
+            # Log detailed skip reason before short-circuiting
+            state = PipelineStateManager.load(dataset_name)
+            reason_parts = ["SKIP"]
 
-        return "validate_state_coherence"
-
-    @task(task_id="mark_skipped")
-    def mark_skipped_task() -> dict[str, Any]:
-        """Mark pipeline as skipped with detailed reason."""
-        state = PipelineStateManager.load(dataset_name)
-
-        # Calculer la raison détaillée
-        reason_parts = ["SKIP"]
-
-        if state and state.last_successful_run:
-            last_success = state.last_successful_run.timestamp
-            age = datetime.now() - last_success
-            frequency_delta = PipelineDecisionEngine.frequency_to_timedelta(
-                dataset.ingestion.frequency
-            )
-
-            reason_parts.append(f"last success: {last_success.isoformat()}")
-            if frequency_delta:
-                reason_parts.append(
-                    f"data age: {age.total_seconds() / 3600:.1f}h < "
-                    f"frequency: {frequency_delta.total_seconds() / 3600:.0f}h"
+            if state and state.last_successful_run:
+                last_success = state.last_successful_run.timestamp
+                age = datetime.now() - last_success
+                frequency_delta = PipelineDecisionEngine.frequency_to_timedelta(
+                    dataset.ingestion.frequency
                 )
 
-        reason = " - ".join(reason_parts)
+                reason_parts.append(f"last success: {last_success.isoformat()}")
+                if frequency_delta:
+                    reason_parts.append(
+                        f"data age: {age.total_seconds() / 3600:.1f}h < "
+                        f"frequency: {frequency_delta.total_seconds() / 3600:.0f}h"
+                    )
 
-        logger.info(f"Pipeline skipped for {dataset_name}", extra={"reason": reason})
+            reason = " - ".join(reason_parts)
+            logger.info(
+                f"Pipeline skipped for {dataset_name}",
+                extra={
+                    "reason": reason,
+                    "action": PipelineAction.SKIP.value,
+                    "dataset": dataset_name,
+                },
+            )
+            return False  # Short-circuit: skip all downstream tasks
 
-        return {
-            "status": "skipped",
-            "dataset": dataset_name,
-            "action": PipelineAction.SKIP.value,
-            "reason": reason,
-        }
+        # Continue with pipeline execution
+        logger.info(
+            f"Pipeline will execute for {dataset_name}",
+            extra={"action": action.value, "dataset": dataset_name},
+        )
+        return True
 
     @task(task_id="cleanup_incoherent_state")
     def cleanup_incoherent_state_task() -> dict[str, Any]:
@@ -249,139 +254,6 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
         """
         result = PipelineDownloader.download(dataset_name=dataset_name, dataset=dataset)
         return AirflowTaskAdapter.to_xcom(result)
-
-    @task.branch(task_id="check_extraction_needed")
-    def check_extraction_needed_task() -> str:
-        """Determine if archive extraction is needed.
-
-        This task decides the extraction path based on dataset format.
-        Decision is based on dataset configuration (not XCom data).
-
-        Returns:
-            Task ID: "extract_archive" if archive format, "skip_extraction" otherwise
-        """
-        if dataset.source.format.is_archive:
-            logger.info(
-                "Archive format detected, extraction needed",
-                extra={"format": str(dataset.source.format)},
-            )
-            return "extract_archive"
-        else:
-            logger.info(
-                "Non-archive format, skipping extraction",
-                extra={"format": str(dataset.source.format)},
-            )
-            return "skip_extraction"
-
-    @task(
-        task_id="extract_archive",
-        execution_timeout=EXTRACT_TIMEOUT,
-    )
-    def extract_archive_task(download_data: dict) -> dict:
-        """Extract archive, cleanup .7z file, and validate landing.
-
-        Args:
-            download_data: XCom dict from download task
-
-        Returns:
-            Dict serialized for XCom (LandingResult → dict)
-        """
-        # Deserialize typed result from XCom
-        download_result = AirflowTaskAdapter.from_xcom_download(download_data)
-
-        archive_path = download_result.path
-
-        # Extract archive
-        extract_result = PipelineDownloader.extract_archive(
-            archive_path=archive_path,
-            dataset=dataset,
-            archive_sha256=download_result.sha256,  # Pass SHA256 explicitly
-        )
-
-        # Cleanup archive after successful extraction
-        try:
-            if archive_path.exists() and archive_path.suffix == ".7z":
-                archive_path.unlink()
-                logger.info(
-                    "Removed archive after successful extraction",
-                    extra={"archive": str(archive_path)},
-                )
-        except Exception as e:
-            logger.warning(
-                "Failed to remove archive (non-critical)",
-                extra={"archive": str(archive_path), "error": str(e)},
-            )
-
-        # Validate landing
-        landing_result = PipelineDownloader.validate_landing(extract_result)
-
-        return AirflowTaskAdapter.to_xcom(landing_result)
-
-    @task(task_id="skip_extraction")
-    def skip_extraction_task(download_data: dict) -> dict:
-        """Skip extraction for non-archive formats and validate landing.
-
-        Args:
-            download_data: XCom dict from download task
-
-        Returns:
-            Dict serialized for XCom (LandingResult → dict)
-        """
-        download_result = AirflowTaskAdapter.from_xcom_download(download_data)
-
-        logger.info(
-            "No extraction needed, file already in final format",
-            extra={"path": str(download_result.path), "format": str(dataset.source.format)},
-        )
-
-        # Create ExtractionResult from DownloadResult (no extraction)
-        extract_result = ExtractionResult(
-            path=download_result.path,
-            size_mib=download_result.size_mib,
-            extracted_sha256=download_result.sha256,
-            archive_sha256=download_result.sha256,  # Same SHA256 (no archive)
-        )
-
-        # Validate landing
-        landing_result = PipelineDownloader.validate_landing(extract_result)
-
-        return AirflowTaskAdapter.to_xcom(landing_result)
-
-    @task(task_id="merge_landing_results", trigger_rule="none_failed_min_one_success")
-    def merge_landing_results_task() -> dict:
-        """Merge landing results from whichever extraction path succeeded.
-
-        This task handles XCom routing for branched extraction paths.
-        Only one of extract_archive or skip_extraction will have executed.
-
-        Uses get_current_context() to access TaskInstance for XCom pulling.
-
-        Returns:
-            Dict with landing result from the successful extraction path
-
-        Raises:
-            ValueError: If no landing data found from either extraction path
-        """
-        # Get Airflow context and TaskInstance
-        context = get_current_context()
-        ti = context["ti"]
-
-        # Try extract_archive first
-        landing_data = ti.xcom_pull(task_ids="extract_archive")
-        if landing_data is not None:
-            logger.info("Using landing data from extract_archive path")
-            return landing_data
-
-        # Fallback to skip_extraction
-        landing_data = ti.xcom_pull(task_ids="skip_extraction")
-        if landing_data is not None:
-            logger.info("Using landing data from skip_extraction path")
-            return landing_data
-
-        # Should never happen with correct trigger_rule
-        raise ValueError(
-            "No landing data found from extraction tasks (extract_archive or skip_extraction)"
-        )
 
     @task(
         task_id="convert_to_bronze",
@@ -549,19 +421,96 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
             },
         )
 
+    @task(task_id="validate_landing")
+    def validate_landing_task(download_data: dict) -> dict:
+        """Validate landing for simple (non-archive) datasets.
+
+        Converts DownloadResult to LandingResult for non-archive formats.
+
+        Args:
+            download_data: XCom dict from download task
+
+        Returns:
+            Dict serialized for XCom (LandingResult → dict)
+        """
+        download_result = AirflowTaskAdapter.from_xcom_download(download_data)
+
+        # TODO: For non-archive files, create ExtractionResult (no actual extraction)
+        extract_result = ExtractionResult(
+            path=download_result.path,
+            size_mib=download_result.size_mib,
+            extracted_sha256=download_result.sha256,
+            archive_sha256=download_result.sha256,  # Same as extracted (no archive)
+        )
+
+        # Validate landing
+        landing_result = PipelineDownloader.validate_landing(extract_result)
+
+        return AirflowTaskAdapter.to_xcom(landing_result)
+
     return {
-        "decide_action": decide_action_task,
-        "mark_skipped": mark_skipped_task,
+        "check_should_run": check_should_run,
         "validate_state_coherence": validate_state_coherence_task,
         "cleanup_incoherent_state": cleanup_incoherent_state_task,
         "download_data": download_data_task,
-        "check_extraction_needed": check_extraction_needed_task,
-        "extract_archive": extract_archive_task,
-        "skip_extraction": skip_extraction_task,
-        "merge_landing_results": merge_landing_results_task,
+        "validate_landing": validate_landing_task,
         "convert_to_bronze": convert_to_bronze_task,
         "transform_to_silver": transform_to_silver_task,
     }
+
+
+def create_extract_tasks(dataset: Dataset) -> dict[str, Any]:
+    """Create archive extraction task for a given dataset.
+
+    Args:
+        dataset: Dataset configuration
+
+    Returns:
+        Dict with 'extract_archive' task function
+    """
+
+    @task(task_id="extract_archive", execution_timeout=EXTRACT_TIMEOUT)
+    def extract_archive_task(download_data: dict) -> dict:
+        """Extract archive, cleanup .7z file, and validate landing.
+
+        Args:
+            download_data: XCom dict from download task
+
+        Returns:
+            Dict serialized for XCom (LandingResult → dict)
+        """
+        # Deserialize typed result from XCom
+        download_result = AirflowTaskAdapter.from_xcom_download(download_data)
+
+        archive_path = download_result.path
+
+        # Extract archive
+        extract_result = PipelineDownloader.extract_archive(
+            archive_path=archive_path,
+            dataset=dataset,
+            archive_sha256=download_result.sha256,  # Pass SHA256 explicitly
+        )
+
+        # Cleanup archive after successful extraction
+        try:
+            if archive_path.exists() and archive_path.suffix == ".7z":
+                archive_path.unlink()
+                logger.info(
+                    "Removed archive after successful extraction",
+                    extra={"archive": str(archive_path)},
+                )
+        except Exception as e:
+            logger.warning(
+                "Failed to remove archive (non-critical)",
+                extra={"archive": str(archive_path), "error": str(e)},
+            )
+
+        # Validate landing
+        landing_result = PipelineDownloader.validate_landing(extract_result)
+
+        return AirflowTaskAdapter.to_xcom(landing_result)
+
+    return {"extract_archive": extract_archive_task}
 
 
 # =============================================================================
@@ -569,7 +518,7 @@ def create_pipeline_tasks(dataset_name: str, dataset: Dataset, asset: Asset):  #
 # =============================================================================
 
 
-def create_dataset_pipeline_dag(
+def create_simple_dag(
     dataset_name: str,
     dataset: Dataset,
     asset: Asset,
@@ -584,21 +533,21 @@ def create_dataset_pipeline_dag(
     Returns:
         Instantiated DAG object
     """
-    tasks = create_pipeline_tasks(dataset_name, dataset, asset)
+    tasks = create_common_tasks(dataset_name, dataset, asset)
 
     desc = dataset.description[:200] if dataset.description else f"Pipeline for {dataset_name}"
 
     @dag(
-        dag_id=f"dataset_pipeline_{dataset_name}",
+        dag_id=f"dag_simple_{dataset_name}",  # TODO, move to settings ?
         description=desc,
         schedule=dataset.ingestion.frequency.airflow_schedule,
-        start_date=datetime(2025, 1, 1),
+        start_date=datetime(2026, 1, 1),
         catchup=False,
         default_args=DEFAULT_ARGS,
         max_active_runs=1,  # Prevent concurrent runs
         tags=[
             dataset.source.provider,
-            "data-pipeline",
+            "simple-dag",
             str(dataset.ingestion.frequency),
         ],
         doc_md=f"""
@@ -612,126 +561,137 @@ def create_dataset_pipeline_dag(
 ### Pipeline Stages
 
 **Decision & Validation:**
-1. **Decide Action** - Determine pipeline action (SKIP/FIRST_RUN/HEAL/RETRY/REFRESH)
-   - SKIP: Data is current, no action needed
+1. **Check Should Run** - Determine pipeline action (SKIP/FIRST_RUN/HEAL/RETRY/REFRESH)
+   - SKIP: Data is current, short-circuits entire pipeline (all downstream tasks skipped)
    - FIRST_RUN: No state file, first execution
    - HEAL: Expected files missing on disk
    - RETRY: Previous run failed
    - REFRESH: Data is stale based on frequency
-2. **Mark Skipped** - Log detailed skip reason (if SKIP)
-3. **Validate State Coherence** - Log state + verify coherence with disk
-4. **Cleanup Incoherent State** - Remove corrupted state file (if incoherent)
+2. **Validate State Coherence** - Log state + verify coherence with disk
+3. **Cleanup Incoherent State** - Remove corrupted state file (if incoherent)
 
 **Data Processing:**
-5. **Download Data** - Fetch from source URL with retry logic
-6. **Check Extraction Needed** - Branch based on file format (is_archive)
-7. **Extract Archive** - Extract file + cleanup .7z archive (if archive format)
-8. **Skip Extraction** - Direct landing validation (if non-archive format)
-9. **Merge Landing Results** - Route XCom from successful extraction path
-10. **Convert to Bronze** - Transform to Parquet with normalized columns
-11. **Transform to Silver** - Apply business rules + emit Asset metadata
+4. **Download Data** - Fetch from source URL with retry logic
+5. **Check Extraction Needed** - Branch based on file format (is_archive)
+6. **Extract Archive** - Extract file + cleanup .7z archive (if archive format)
+7. **Skip Extraction** - Direct landing validation (if non-archive format)
+8. **Merge Landing Results** - Route XCom from successful extraction path
+9. **Convert to Bronze** - Transform to Parquet with normalized columns
+10. **Transform to Silver** - Apply business rules + emit Asset metadata
 
 ### Conditional Paths
-- **Skip Path**: decide_action → mark_skipped (END)
+- **Skip Path**: check_should_run → (returns False) → all downstream skipped
 - **Heal Path**: validate → cleanup → download → ...
 - **Archive Path**: download → check → extract_archive → merge → bronze → silver
 - **Non-Archive Path**: download → check → skip_extraction → merge → bronze → silver
-        """,
+""",
     )
     def dataset_pipeline() -> None:
         """Data pipeline with conditional extraction and state validation.
 
         Flow:
-        decide_action -> mark_skipped (END)
-                      -> validate_state_coherence -> download_data
-                                                  -> cleanup_incoherent_state -> download_data
-        download_data -> check_extraction_needed -> extract_archive -> merge_landing_results
-                                                 -> skip_extraction -> merge_landing_results
+        check_should_run (short_circuit)
+            -> validate_state_coherence -> download_data
+                                        -> cleanup_incoherent_state -> download_data
+        download_data -> check_extraction_needed
+            -> extract_archive -> merge_landing_results
+            -> skip_extraction -> merge_landing_results
         merge_landing_results -> convert_to_bronze -> transform_to_silver (END)
+
+        Note: If check_should_run returns False (SKIP), all downstream tasks skipped.
         """
-        # 1. Decide action (branch)
-        branch = tasks["decide_action"]()
+        # 1. Check if pipeline should run (short-circuit if SKIP)
+        should_run = tasks["check_should_run"]()
 
-        # 2. Skip path (END)
-        skip = tasks["mark_skipped"]()
-
-        # 3. Validate state and cleanup if needed
+        # 2. Validate state and cleanup if needed
         validate = tasks["validate_state_coherence"]()
         cleanup = tasks["cleanup_incoherent_state"]()
         download = tasks["download_data"]()
 
-        # 4. Extraction branching
-        check_extract = tasks["check_extraction_needed"]()
-        extract = tasks["extract_archive"](download)
-        skip_extract = tasks["skip_extraction"](download)
+        # 3. Validate landing (convert DownloadResult → LandingResult)
+        landing = tasks["validate_landing"](download)
 
-        # 5. Merge extraction results
-        merge_landing = tasks["merge_landing_results"]()
-
-        # 6. Transformation
-        bronze = tasks["convert_to_bronze"](merge_landing)
+        # 4. Transformation
+        bronze = tasks["convert_to_bronze"](landing)
         _silver = tasks["transform_to_silver"](bronze)  # Final task with outlet
 
-        # 7. Define branching graph
-        branch >> [skip, validate]
+        # 5. Define task dependencies
+        should_run >> validate
         validate >> [cleanup, download]
         cleanup >> download
-        download >> check_extract
-        check_extract >> [extract, skip_extract]
-        [extract, skip_extract] >> merge_landing
-        merge_landing >> bronze
 
     return dataset_pipeline()
 
 
-# =============================================================================
-# Module-Level DAG Generation
-# =============================================================================
+def create_archive_dag(
+    dataset_name: str,
+    dataset: Dataset,
+    asset: Asset,
+) -> DAG:
+    """Create a production-ready DAG for a dataset.
 
-
-def _generate_all_pipelines() -> dict[str, DAG]:
-    """Generate all DAGs from catalog with error handling.
+    Args:
+        dataset_name: Unique identifier for the dataset
+        dataset: Dataset configuration from catalog
+        asset: Target Asset representing the silver layer output
 
     Returns:
-        Dictionary mapping pipeline names to DAG objects.
-        If catalog fails to load, returns a single error DAG.
+        Instantiated DAG object
     """
-    try:
-        catalog = DataCatalog.load(settings.data_catalog_file_path)
-    except InvalidCatalogError as e:
-        logger.exception(
-            "Failed to load data catalog",
-            extra={"path": str(settings.data_catalog_file_path), "errors": e.validation_errors},
-        )
-        return {"catalog_error": _create_error_dag("catalog_load_error", str(e))}
-    except Exception as e:
-        logger.exception("Unexpected error loading catalog")
-        return {"catalog_error": _create_error_dag("catalog_load_error", str(e))}
+    tasks = create_common_tasks(dataset_name, dataset, asset)
+    tasks["extract_archive"] = create_extract_tasks(dataset)["extract_archive"]
 
-    pipelines: dict[str, DAG] = {}
+    desc = dataset.description[:200] if dataset.description else f"Pipeline for {dataset_name}"
 
-    for name, dataset in catalog.datasets.items():
-        try:
-            asset = _create_asset_for_dataset(name, dataset)
-            dag_obj = create_dataset_pipeline_dag(name, dataset, asset)
-            pipelines[name] = dag_obj
-            logger.info(f"Created pipeline DAG: dataset_pipeline_{name}")
-        except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
-            logger.exception(
-                f"Failed to create DAG for {name}",
-                extra={"error": error_msg, "traceback": traceback.format_exc()},
-            )
-            # Create individual error DAG with unique ID
-            pipelines[f"{name}_error"] = _create_error_dag(
-                dag_id=f"dataset_pipeline_{name}_error",
-                error_message=error_msg,
-            )
+    @dag(
+        dag_id=f"dag_archive_{dataset_name}",  # TODO, move to settings ?
+        description=desc,
+        schedule=dataset.ingestion.frequency.airflow_schedule,
+        start_date=datetime(2026, 1, 1),
+        catchup=False,
+        default_args=DEFAULT_ARGS,
+        max_active_runs=1,  # Prevent concurrent runs
+        tags=[
+            dataset.source.provider,
+            "archive-dag",
+            str(dataset.ingestion.frequency),
+        ],
+    )
+    def dataset_pipeline() -> None:
+        """Data pipeline with conditional extraction and state validation.
 
-    return pipelines
+        Flow:
+        check_should_run (short_circuit)
+            -> validate_state_coherence -> download_data
+                                        -> cleanup_incoherent_state -> download_data
+        download_data -> check_extraction_needed
+            -> extract_archive -> merge_landing_results
+            -> skip_extraction -> merge_landing_results
+        merge_landing_results -> convert_to_bronze -> transform_to_silver (END)
 
+        Note: If check_should_run returns False (SKIP), all downstream tasks skipped.
+        """
+        # 1. Check if pipeline should run (short-circuit if SKIP)
+        should_run = tasks["check_should_run"]()
 
-# =============================================================================
-# The Single Global Variable (Required by Airflow)
-# =============================================================================
-_generate_all_pipelines()
+        # 2. Validate state and cleanup if needed
+        validate = tasks["validate_state_coherence"]()
+        cleanup = tasks["cleanup_incoherent_state"]()
+
+        # 3. Download
+        download = tasks["download_data"]()  # (trigger_rule="none_failed_min_one_success")
+
+        # 4. Extraction extra tasks
+        extract = tasks["extract_archive"](download)
+        # merge_landing = archive_tasks["merge_landing_results"](extract)
+
+        # 5. Transformation
+        bronze = tasks["convert_to_bronze"](extract)
+        _silver = tasks["transform_to_silver"](bronze)  # Final task with outlet
+
+        # 6. Define task dependencies
+        should_run >> validate
+        validate >> [cleanup, download]
+        cleanup >> download
+
+    return dataset_pipeline()
