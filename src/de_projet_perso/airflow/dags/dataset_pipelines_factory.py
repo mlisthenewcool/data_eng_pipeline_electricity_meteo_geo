@@ -35,7 +35,6 @@ from airflow.sdk import DAG, Asset, Metadata, dag, get_current_context, task
 from de_projet_perso.airflow.adapters import AirflowTaskAdapter
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.decision import PipelineDecisionEngine
 from de_projet_perso.pipeline.downloader import PipelineDownloader
 from de_projet_perso.pipeline.results import ExtractionResult
@@ -172,7 +171,7 @@ def create_common_tasks(  # noqa: PLR0915
         Returns:
             bool: True to continue pipeline, False to skip all downstream tasks
         """
-        action = PipelineDecisionEngine.decide_action(dataset_name, dataset, settings.data_dir_path)
+        action = PipelineDecisionEngine.decide_action(dataset_name, dataset)
 
         if action == PipelineAction.SKIP:
             # Log detailed skip reason before short-circuiting
@@ -284,7 +283,7 @@ def create_common_tasks(  # noqa: PLR0915
         This task combines state logging and validation:
         1. Logs current pipeline state for visibility in Airflow UI
         2. Validates that state matches reality on disk
-        3. Branches to cleanup if incoherent, or continues to download
+        3. Branches to clean up if incoherent, or continues to download
 
         Validations performed:
         - Expected file exists on disk
@@ -389,9 +388,7 @@ def create_common_tasks(  # noqa: PLR0915
             ti = context.get("ti")
             if ti:
                 state = PipelineStateManager.load(dataset_name)
-                action_taken = PipelineDecisionEngine.infer_action_from_state(
-                    state, dataset, settings.data_dir_path
-                )
+                action_taken = PipelineDecisionEngine.infer_action_from_state(state, dataset)
         except Exception:
             # Fallback to FIRST_RUN if context unavailable or state unreadable
             pass
@@ -609,14 +606,11 @@ def create_simple_dag(
         cleanup = tasks["cleanup_incoherent_state"]()
         download = tasks["download_data"]()
 
-        # 3. Validate landing (convert DownloadResult → LandingResult)
-        landing = tasks["validate_landing"](download)
-
-        # 4. Transformation
-        bronze = tasks["convert_to_bronze"](landing)
+        # 3. Transformation
+        bronze = tasks["convert_to_bronze"](download)
         _silver = tasks["transform_to_silver"](bronze)  # Final task with outlet
 
-        # 5. Define task dependencies
+        # 4. Define task dependencies
         should_run >> validate
         validate >> [cleanup, download]
         cleanup >> download

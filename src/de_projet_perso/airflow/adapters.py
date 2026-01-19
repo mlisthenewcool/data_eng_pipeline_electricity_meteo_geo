@@ -92,8 +92,8 @@ class AirflowTaskAdapter:
         """
         return DownloadResult(
             path=Path(data["path"]),
-            sha256=str(data["sha256"]),
             size_mib=float(data["size_mib"]),
+            sha256=str(data["sha256"]),
             original_filename=str(data["original_filename"]),
         )
 
@@ -119,8 +119,8 @@ class AirflowTaskAdapter:
         return ExtractionResult(
             path=Path(data["path"]),
             size_mib=float(data["size_mib"]),
-            extracted_sha256=str(data["extracted_sha256"]),
             archive_sha256=str(data["archive_sha256"]),
+            extracted_sha256=str(data["extracted_sha256"]),
             original_filename=str(data["original_filename"]),
         )
 

@@ -68,6 +68,9 @@ Voir [README_DX.md](docs/README_DX.md)
         - [x] calcul avec `Path(...).with_suffix(...)`
     - [x] résoudre les incohérences de nommage de fichiers (avant landing garde les mêmes noms que sur le serveur,
       ce n'est qu'à partir de la couche bronze qu'on renomme avec nos conventions)
+    - [ ] basculer sur une architecture de résolution de chemin découplée du Dataset
+        - [ ] retirer la propriété storage du data catalogue
+        - [ ] ajouter classe PipelinePathResolver
 
 - [ ] simplifier pipeline
     - [x] passage à 2 DAGs spécifiques (un avec et un sans extraction d'archive)
@@ -131,7 +134,7 @@ Voir [README_DX.md](docs/README_DX.md)
 - [ ] ajout métrique de performances
 - [ ] [ajouter configuration Open Lineage](https://airflow.apache.org/docs/apache-airflow-providers-openlineage/stable/guides/user.html)
 - [ ] si besoin de paralléliser, regarder @task.map
-- [ ] si besoin d'améliorer perfs, faire du incremental loading pour les datasets
+- [ ] si besoin d'améliorer perfs, faire du incremental loading pour les datasets, compresser les parquets avec zstd
 - [ ] potentiel problème de performances pour la lecture des dataframes (à documenter, pour l'instant cohérence
   bronze/silver lors du passage des arguments aux fonctions de transformations). Puisqu'on change de tâche entre
   bronze & silver, on doit relire à nouveau le même dataframe.

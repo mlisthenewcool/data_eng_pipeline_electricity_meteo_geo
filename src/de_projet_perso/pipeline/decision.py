@@ -5,7 +5,6 @@ based on state, completely decoupled from Airflow orchestration.
 """
 
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
@@ -16,11 +15,7 @@ class PipelineDecisionEngine:
     """Decision logic for determining pipeline actions."""
 
     @staticmethod
-    def decide_action(
-        dataset_name: str,
-        dataset: Dataset,
-        data_dir: Path,
-    ) -> PipelineAction:
+    def decide_action(dataset_name: str, dataset: Dataset) -> PipelineAction:
         """Determine which action to take based on pipeline state.
 
         Priority order:
@@ -33,7 +28,6 @@ class PipelineDecisionEngine:
         Args:
             dataset_name: Dataset identifier
             dataset: Dataset configuration
-            data_dir: Root data directory
 
         Returns:
             PipelineAction enum value
@@ -106,7 +100,6 @@ class PipelineDecisionEngine:
     def infer_action_from_state(
         state: PipelineState | None,
         dataset: Dataset,
-        data_dir: Path,
     ) -> PipelineAction:
         """Infer which action was taken based on current state.
 
@@ -116,7 +109,6 @@ class PipelineDecisionEngine:
         Args:
             state: Current pipeline state (PipelineState or None)
             dataset: Dataset configuration
-            data_dir: Root data directory
 
         Returns:
             PipelineAction enum value
