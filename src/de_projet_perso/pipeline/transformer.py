@@ -28,7 +28,7 @@ class PipelineTransformer:
     """Transformation logic for bronze and silver layers."""
 
     @staticmethod
-    def to_bronze(landing_path: Path, dataset_name: str, dataset: Dataset) -> BronzeResult:
+    def to_bronze(landing_path: Path, dataset: Dataset) -> BronzeResult:
         """Convert landing file to Parquet with normalized column names.
 
         Bronze layer transformations:
@@ -41,7 +41,6 @@ class PipelineTransformer:
 
         Args:
             landing_path: todo
-            dataset_name: Dataset identifier
             dataset: Dataset configuration
 
         Returns:
@@ -55,7 +54,7 @@ class PipelineTransformer:
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            f"Converting to bronze for {dataset_name}",
+            f"Converting to bronze for {dataset.name}",
             extra={
                 "source": str(landing_path),
                 "dest": str(bronze_path),
@@ -63,14 +62,14 @@ class PipelineTransformer:
         )
 
         # Apply dataset-specific bronze transformation
-        transforms = get_bronze_transform(dataset_name)
+        transforms = get_bronze_transform(dataset.name)
         if transforms is None:
             raise NotImplementedError(
-                f"No bronze transformation registered for dataset: {dataset_name}"
+                f"No bronze transformation registered for dataset: {dataset.name}"
             )
 
         logger.info(
-            f"Applying bronze transformations for {dataset_name}",
+            f"Applying bronze transformations for {dataset.name}",
             extra={"landing_path": str(landing_path)},
         )
 
@@ -82,7 +81,7 @@ class PipelineTransformer:
         row_count = len(df)
 
         logger.info(
-            f"Bronze conversion complete for {dataset_name}",
+            f"Bronze conversion complete for {dataset.name}",
             extra={
                 "rows": row_count,
                 "columns": len(columns),
@@ -95,7 +94,6 @@ class PipelineTransformer:
     @staticmethod
     def to_silver(
         bronze_result: BronzeResult,
-        dataset_name: str,
         dataset: Dataset,
     ) -> SilverResult:
         """Apply business transformations to create silver layer.
@@ -107,7 +105,6 @@ class PipelineTransformer:
 
         Args:
             bronze_result: Result from bronze transformation (contains file path and SHA256s)
-            dataset_name: Dataset identifier
             dataset: Dataset configuration
 
         Returns:
@@ -118,20 +115,20 @@ class PipelineTransformer:
         bronze_path = dataset.get_bronze_path()
 
         logger.info(
-            f"Transforming to silver for {dataset_name}",
+            f"Transforming to silver for {dataset.name}",
             extra={"source": bronze_path.name},
         )
 
         # Apply dataset-specific silver transformation
-        transforms = get_silver_transform(dataset_name)
+        transforms = get_silver_transform(dataset.name)
         if transforms is None:
             raise NotImplementedError(
-                f"No silver transformation registered for dataset: {dataset_name}"
+                f"No silver transformation registered for dataset: {dataset.name}"
             )
 
         logger.info(
-            f"Applying custom silver transformation for {dataset_name}",
-            extra={"dataset": dataset_name},
+            f"Applying custom silver transformation for {dataset.name}",
+            extra={"dataset": dataset.name},
         )
         df = transforms(dataset)
         df.write_parquet(silver_path)
@@ -140,7 +137,7 @@ class PipelineTransformer:
         row_count = len(df)
 
         logger.info(
-            f"Silver transformation complete for {dataset_name}",
+            f"Silver transformation complete for {dataset.name}",
             extra={"rows": row_count, "columns": len(columns)},
         )
 

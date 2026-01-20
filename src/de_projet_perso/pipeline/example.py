@@ -35,11 +35,11 @@ if __name__ == "__main__":
 
     _catalog = DataCatalog.load(settings.data_catalog_file_path)
 
-    # _dataset_name = "meteo_france_stations"
-    # _dataset_name = "odre_installations"
-    _dataset_name = "ign_contours_iris"
-    # _dataset_name = "odre_eco2mix_cons_def"
-    _dataset = _catalog.get_dataset(_dataset_name)
+    # __dataset_name = "meteo_france_stations"
+    # __dataset_name = "odre_installations"
+    __dataset_name = "ign_contours_iris"
+    # __dataset_name = "odre_eco2mix_cons_def"
+    _dataset = _catalog.get_dataset(__dataset_name)
 
     # ==============================
     # Step 1: Check if metadata changed
@@ -47,10 +47,11 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Checking metadata ...")
     logger.info("=" * 80)
-    _metadata = PipelineManager.has_dataset_metadata_changed(_dataset, _dataset_name)
+    _metadata = PipelineManager.has_dataset_metadata_changed(_dataset)
     if _metadata.action == PipelineAction.SKIP:
-        _state = PipelineStateManager.load(_dataset_name)
-        logger.info("Pipeline will be skipped (data is up to date)", extra=_state.model_dump())
+        _state = PipelineStateManager.load(_dataset.name)
+        if _state:
+            logger.info("Pipeline will be skipped (data is up to date)", extra=_state.model_dump())
         sys.exit(0)
 
     logger.info(
@@ -113,12 +114,12 @@ if __name__ == "__main__":
         logger.info("=" * 80)
         logger.info("Checking hash...")
         logger.info("=" * 80)
-        should_continue = PipelineManager.has_hash_changed(_dataset_name, _extraction)
+        should_continue = PipelineManager.has_hash_changed(_dataset.name, _extraction)
     else:
         logger.info("=" * 80)
         logger.info("Checking hash...")
         logger.info("=" * 80)
-        should_continue = PipelineManager.has_hash_changed(_dataset_name, _download)
+        should_continue = PipelineManager.has_hash_changed(_dataset.name, _download)
 
         # For non-archive: get landing_path from download
         _extraction = None  # hacky
@@ -136,9 +137,7 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to bronze layer...")
     logger.info("=" * 80)
-    _bronze = PipelineTransformer.to_bronze(
-        landing_path=landing_path, dataset_name=_dataset_name, dataset=_dataset
-    )
+    _bronze = PipelineTransformer.to_bronze(landing_path=landing_path, dataset=_dataset)
     logger.info("Bronze transformation completed", extra=_bronze.to_serializable())
 
     # ==============================
@@ -147,9 +146,7 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to silver layer...")
     logger.info("=" * 80)
-    _silver = PipelineTransformer.to_silver(
-        bronze_result=_bronze, dataset_name=_dataset_name, dataset=_dataset
-    )
+    _silver = PipelineTransformer.to_silver(bronze_result=_bronze, dataset=_dataset)
 
     logger.info("Silver transformation completed !", extra=_silver.to_serializable())
 
@@ -170,7 +167,7 @@ if __name__ == "__main__":
         file_size_mib = _extraction.size_mib
 
     PipelineStateManager.update_success(
-        dataset_name=_dataset_name,
+        dataset_name=_dataset.name,
         version=_dataset.ingestion.version,
         etag=_metadata.remote_file_metadata.etag,
         last_modified=_metadata.remote_file_metadata.last_modified,

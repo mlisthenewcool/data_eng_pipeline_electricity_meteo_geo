@@ -109,18 +109,17 @@ def _create_error_dag(dag_id: str, error_message: str) -> DAG:
 # =============================================================================
 
 
-def _create_asset_for_dataset(name: str, dataset: Dataset) -> Asset:
+def _create_asset_for_dataset(dataset: Dataset) -> Asset:
     """Create an Asset representing the silver layer output for a dataset.
 
     Args:
-        name: Dataset identifier
         dataset: Dataset configuration
 
     Returns:
         Asset configured for the silver layer output
     """
     return Asset(
-        name=f"{name}_silver",
+        name=f"{dataset.name}_silver",
         uri=f"file:///{dataset.get_silver_path()}",
         group="data-pipeline",
         extra={
@@ -138,9 +137,7 @@ def _create_asset_for_dataset(name: str, dataset: Dataset) -> Asset:
 
 
 # TODO: typer proprement le retour
-def create_common_tasks(  # noqa: PLR0915
-    dataset_name: str, dataset: Dataset, asset: Asset
-) -> dict[str, Any]:
+def create_common_tasks(dataset: Dataset, asset: Asset) -> dict[str, Any]:
     """Create all tasks for a dataset pipeline.
 
     This factory approach keeps task definitions close to DAG creation,
@@ -148,7 +145,6 @@ def create_common_tasks(  # noqa: PLR0915
     with dynamic DAG generation.
 
     Args:
-        dataset_name: Dataset identifier
         dataset: Dataset configuration
         asset: Target Asset for the silver layer
 
@@ -159,7 +155,7 @@ def create_common_tasks(  # noqa: PLR0915
     @task.short_circuit(task_id="check_remote_changed")
     def check_remote_changed() -> dict[str, Any] | bool:
         """TODO."""
-        ctx = PipelineManager.has_dataset_metadata_changed(dataset, dataset_name)
+        ctx = PipelineManager.has_dataset_metadata_changed(dataset)
         return False if not ctx else ctx.to_serializable()
 
     @task.short_circuit(
@@ -171,7 +167,7 @@ def create_common_tasks(  # noqa: PLR0915
         """TODO."""
         _metadata = CheckMetadataResult.from_dict(metadata_dict)
         download = PipelineManager.download(dataset)
-        has_changed = PipelineManager.has_hash_changed(dataset_name, download)
+        has_changed = PipelineManager.has_hash_changed(dataset.name, download)
 
         if not has_changed:
             return False
@@ -197,9 +193,7 @@ def create_common_tasks(  # noqa: PLR0915
         bronze = BronzeResult.from_dict(bronze_dict)
 
         # Transform to silver
-        silver = PipelineTransformer.to_silver(
-            bronze_result=bronze, dataset_name=dataset_name, dataset=dataset
-        )
+        silver = PipelineTransformer.to_silver(bronze_result=bronze, dataset=dataset)
 
         # TODO: qu'est-ce qui est vraiment important ?
         #  retirer les doublons par rapport au PipelineContext
@@ -211,7 +205,7 @@ def create_common_tasks(  # noqa: PLR0915
         file_size_mib = bronze_dict.get("size_mib", -1)
 
         PipelineStateManager.update_success(
-            dataset_name=dataset_name,
+            dataset_name=dataset.name,
             version=dataset.ingestion.version,
             etag=bronze_dict.get("etag"),
             last_modified=bronze_dict.get("last_modified"),
@@ -221,15 +215,6 @@ def create_common_tasks(  # noqa: PLR0915
             row_count=silver.row_count,
             columns=silver.columns,
         )
-
-        # version=version,
-        # etag=etag,
-        # last_modified=last_modified,
-        # content_length=content_length,
-        # sha256=sha256,
-        # file_size_mib=file_size_mib,
-        # row_count=row_count,
-        # columns=columns,
 
         # Emit enriched metadata for Airflow UI
         # These metadata fields will be visible in the Assets tab
@@ -247,7 +232,7 @@ def create_common_tasks(  # noqa: PLR0915
                 "row_count": silver.row_count,
                 "columns": silver.columns,
                 # extra
-                "state_file": str(PipelineStateManager.get_state_path(dataset_name)),
+                "state_file": str(PipelineStateManager.get_state_path(dataset.name)),
             },
         )
 
@@ -258,12 +243,11 @@ def create_common_tasks(  # noqa: PLR0915
     }
 
 
-def create_simple_tasks(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
+def create_simple_tasks(dataset: Dataset) -> dict[str, Any]:
     """Create archive extraction tasks for a given dataset.
 
     Args:
         dataset: Dataset configuration
-        dataset_name: ...
 
     Returns:
         Dict with 'extract_archive' task function
@@ -299,7 +283,7 @@ def create_simple_tasks(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
         if not download.path.exists():
             raise FileNotFoundError(
                 f"Landing file not found: {download.path}. "
-                f"Dataset: {dataset_name}. "
+                f"Dataset: {dataset.name}. "
                 "This may indicate missing files (HEAL scenario). "
                 "To fix: Manually delete the state file and re-run the pipeline, "
                 f"or delete the landing file: {download.path}"
@@ -308,19 +292,18 @@ def create_simple_tasks(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
         return (
             download_dict
             | PipelineTransformer.to_bronze(
-                landing_path=download.path, dataset_name=dataset_name, dataset=dataset
+                landing_path=download.path, dataset=dataset
             ).to_serializable()
         )
 
     return {"convert_to_bronze": convert_to_bronze_task}
 
 
-def create_archive_tasks(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
+def create_archive_tasks(dataset: Dataset) -> dict[str, Any]:
     """Create archive extraction tasks for a given dataset.
 
     Args:
         dataset: Dataset configuration
-        dataset_name: ...
 
     Returns:
         Dict with 'extract_archive' task function
@@ -342,7 +325,7 @@ def create_archive_tasks(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
 
         extract = PipelineManager.extract_archive(archive_path=download.path, dataset=dataset)
 
-        has_changed = PipelineManager.has_hash_changed(dataset_name, extract)
+        has_changed = PipelineManager.has_hash_changed(dataset.name, extract)
 
         if not has_changed:
             return False
@@ -379,7 +362,7 @@ def create_archive_tasks(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
         if not extraction.extracted_file_path.exists():
             raise FileNotFoundError(
                 f"Landing file not found: {extraction.extracted_file_path}. "
-                f"Dataset: {dataset_name}. "
+                f"Dataset: {dataset.name}. "
                 "This may indicate missing files (HEAL scenario). "
                 "To fix: Manually delete the state file and re-run the pipeline, "
                 f"or delete the landing file: {extraction.extracted_file_path}"
@@ -389,7 +372,6 @@ def create_archive_tasks(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
             extraction_dict
             | PipelineTransformer.to_bronze(
                 landing_path=extraction.extracted_file_path,
-                dataset_name=dataset_name,
                 dataset=dataset,
             ).to_serializable()
         )
@@ -405,29 +387,22 @@ def create_archive_tasks(dataset: Dataset, dataset_name: str) -> dict[str, Any]:
 # =============================================================================
 
 
-def create_simple_dag(
-    dataset_name: str,
-    dataset: Dataset,
-    asset: Asset,
-) -> DAG:
+def create_simple_dag(dataset: Dataset, asset: Asset) -> DAG:
     """Create a production-ready DAG for a dataset.
 
     Args:
-        dataset_name: Unique identifier for the dataset
         dataset: Dataset configuration from catalog
         asset: Target Asset representing the silver layer output
 
     Returns:
         Instantiated DAG object
     """
-    tasks = create_common_tasks(dataset_name, dataset, asset) | create_simple_tasks(
-        dataset, dataset_name
-    )
+    tasks = create_common_tasks(dataset, asset) | create_simple_tasks(dataset)
 
-    desc = dataset.description[:200] if dataset.description else f"Pipeline for {dataset_name}"
+    desc = dataset.description[:200] if dataset.description else f"Pipeline for {dataset.name}"
 
     @dag(
-        dag_id=f"dag_simple_{dataset_name}",  # TODO, move to settings ?
+        dag_id=f"dag_simple_{dataset.name}",  # TODO, move to settings ?
         description=desc,
         schedule=dataset.ingestion.frequency.airflow_schedule,
         start_date=datetime(2026, 1, 1),
@@ -440,7 +415,7 @@ def create_simple_dag(
             str(dataset.ingestion.frequency),
         ],
         doc_md=f"""
-## Dataset Pipeline: {dataset_name}
+## Dataset Pipeline: {dataset.name}
 
 **Provider:** {dataset.source.provider}
 **Format:** {dataset.source.format}
@@ -513,15 +488,10 @@ def create_simple_dag(
     return dataset_pipeline()
 
 
-def create_archive_dag(
-    dataset_name: str,
-    dataset: Dataset,
-    asset: Asset,
-) -> DAG:
+def create_archive_dag(dataset: Dataset, asset: Asset) -> DAG:
     """Create a production-ready DAG for a dataset.
 
     Args:
-        dataset_name: Unique identifier for the dataset
         dataset: Dataset configuration from catalog
         asset: Target Asset representing the silver layer output
 
@@ -529,14 +499,12 @@ def create_archive_dag(
         Instantiated DAG object
     """
     # merge common & specific-dag tasks
-    tasks = create_common_tasks(dataset_name, dataset, asset) | create_archive_tasks(
-        dataset, dataset_name
-    )
+    tasks = create_common_tasks(dataset, asset) | create_archive_tasks(dataset)
 
-    desc = dataset.description[:200] if dataset.description else f"Pipeline for {dataset_name}"
+    desc = dataset.description[:200] if dataset.description else f"Pipeline for {dataset.name}"
 
     @dag(
-        dag_id=f"dag_archive_{dataset_name}",  # TODO, move to settings ?
+        dag_id=f"dag_archive_{dataset.name}",  # TODO, move to settings ?
         description=desc,
         schedule=dataset.ingestion.frequency.airflow_schedule,
         start_date=datetime(2026, 1, 1),

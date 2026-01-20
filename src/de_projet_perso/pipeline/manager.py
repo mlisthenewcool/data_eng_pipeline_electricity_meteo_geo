@@ -36,7 +36,7 @@ class PipelineManager:
     """All functions used for pipeline data sources."""
 
     @staticmethod
-    def has_dataset_metadata_changed(dataset: Dataset, dataset_name: str) -> CheckMetadataResult:
+    def has_dataset_metadata_changed(dataset: Dataset) -> CheckMetadataResult:
         """Check if remote file has changed using HTTP HEAD (Smart Skip #1).
 
         This performs HTTP HEAD request to fetch ETag, Last-Modified, and
@@ -59,11 +59,11 @@ class PipelineManager:
         )
 
         # 2. Load previous state
-        state = PipelineStateManager.load(dataset_name)
+        state = PipelineStateManager.load(dataset.name)
 
         # 3. FIRST_RUN: No previous state
         if state is None or state.last_successful_run is None:
-            logger.debug(f"No previous successful run found for {dataset_name}, will run")
+            logger.debug(f"No previous successful run found for {dataset.name}, will run")
 
             return CheckMetadataResult(
                 action=PipelineAction.FIRST_RUN,
@@ -73,7 +73,7 @@ class PipelineManager:
         # 4. Extract previous remote metadata from download stage
         if not state.last_successful_run:
             # TODO: traiter comme une erreur ici ? ou considérer comme FIRST_RUN ?
-            logger.error(f"No download stage in state for {dataset_name} - treating as first run")
+            logger.error(f"No successful run found for {dataset.name}, treating as first run")
             raise Exception  # TODO: erreur spécifique à créer
 
         previous_remote = RemoteFileInfo(
@@ -88,7 +88,7 @@ class PipelineManager:
         # SKIP: Remote unchanged
         if not changed_result.has_changed:
             logger.debug(
-                f"Pipeline skipped for {dataset_name}: remote unchanged",
+                f"Pipeline skipped for {dataset.source}: remote unchanged",
                 extra={
                     "reason": changed_result.reason,
                     "etag": remote_info.etag,
@@ -103,7 +103,7 @@ class PipelineManager:
 
         # REFRESH: Remote changed
         logger.debug(
-            f"Pipeline will execute for {dataset_name}: remote changed",
+            f"Pipeline will execute for {dataset.name}: remote changed",
             extra={
                 "reason": changed_result.reason,
                 "action": PipelineAction.REFRESH.value,

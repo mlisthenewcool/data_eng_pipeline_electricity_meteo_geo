@@ -372,6 +372,7 @@ class Dataset(StrictModel):
         Path('data/bronze/contours_iris/2025_01_15/file.parquet')
     """
 
+    name: str
     description: str
     source: Source
     ingestion: Ingestion
@@ -547,6 +548,16 @@ class DataCatalog(StrictModel):
 
     datasets: dict[str, Dataset]
 
+    @model_validator(mode="before")
+    @classmethod
+    def inject_names_into_datasets(cls, data: dict) -> dict:
+        """Inject the YAML dictionary key into the 'name' field of each dataset."""
+        if isinstance(data, dict) and "datasets" in data:
+            for name, config in data["datasets"].items():
+                if isinstance(config, dict):
+                    config["name"] = name
+        return data
+
     @classmethod
     def load(cls, path: Path) -> Self:
         """Load and validate the data catalog from YAML file.
@@ -582,12 +593,14 @@ class DataCatalog(StrictModel):
                 )
 
             return cls.model_validate(data)
-        except yaml.YAMLError as e:
-            raise InvalidCatalogError(path=path, reason=f"error parsing YAML: {e}") from e
+        except yaml.YAMLError as yaml_error:
+            raise InvalidCatalogError(
+                path=path, reason=f"error parsing YAML: {yaml_error}"
+            ) from yaml_error
         except ValidationError as pydantic_errors:
             raise InvalidCatalogError(
                 path=path,
-                reason="Pydantic validation error",
+                reason="Pydantic validation errors",
                 validation_errors=format_pydantic_errors(pydantic_errors),
             ) from pydantic_errors
 
@@ -639,9 +652,10 @@ if __name__ == "__main__":
             message=f"dataset: {_name}",
             # extra=_dataset.model_dump(),
             extra={
+                "name": _dataset.name,
                 "provider": _dataset.source.provider,
                 "version": _dataset.ingestion.version,
                 "format": _dataset.source.format.value,
-                "storage (landing)": _dataset.get_landing_path(),
+                "storage (landing)": _dataset.get_landing_dir(),
             },
         )

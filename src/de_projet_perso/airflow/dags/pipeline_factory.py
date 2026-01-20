@@ -50,16 +50,15 @@ def _generate_all_dags() -> dict[str, DAG]:
 
     for name, dataset in catalog.datasets.items():
         try:
-            asset = _create_asset_for_dataset(name, dataset)
+            asset = _create_asset_for_dataset(dataset)
 
             # TODO: injecter directement la fonction si plus de types de DAGs
             if _should_use_archive_dag(dataset):
                 dag_id = f"dag_archive_{name}"
-                dag_obj = create_archive_dag(name, dataset, asset)
-                # dag_obj = create_simple_dag(name, dataset, asset)  # todo debug
+                dag_obj = create_archive_dag(dataset, asset)
             else:
                 dag_id = f"dag_simple_{name}"
-                dag_obj = create_simple_dag(name, dataset, asset)
+                dag_obj = create_simple_dag(dataset, asset)
 
             pipelines[name] = dag_obj
             logger.info(f"Created dataset DAG: {dag_id}")
