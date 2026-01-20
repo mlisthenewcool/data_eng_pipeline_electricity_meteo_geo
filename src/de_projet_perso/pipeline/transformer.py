@@ -4,19 +4,23 @@ This module handles bronze and silver layer transformations,
 completely decoupled from Airflow orchestration.
 
 Transformations:
-- Bronze: Raw → Parquet with normalized columns
+- Bronze: Landing (ExtractionResult) → Parquet with normalized columns
 - Silver: Bronze → Business logic applied (custom transformations)
 
 SHA256 Propagation:
-- Landing SHA256 is propagated through all layers for traceability
+- Extracted file SHA256 is propagated through all layers for traceability
 - Archive SHA256 is also propagated to track original source
+
+Architecture changes:
+- to_bronze() now accepts ExtractionResult or DownloadResult (via source_path)
+- No separate landing layer result type needed
 """
 
-import polars as pl
+from pathlib import Path
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.pipeline.results import BronzeResult, LandingResult, SilverResult
+from de_projet_perso.pipeline.results import BronzeResult, SilverResult
 from de_projet_perso.pipeline.transformations import get_bronze_transform, get_silver_transform
 
 
@@ -24,13 +28,11 @@ class PipelineTransformer:
     """Transformation logic for bronze and silver layers."""
 
     @staticmethod
-    def to_bronze(
-        landing_result: LandingResult, dataset_name: str, dataset: Dataset
-    ) -> BronzeResult:
+    def to_bronze(landing_path: Path, dataset_name: str, dataset: Dataset) -> BronzeResult:
         """Convert landing file to Parquet with normalized column names.
 
         Bronze layer transformations:
-        1. Read raw file from landing (preserves original filename)
+        1. Read raw file from landing (ExtractionResult contains path)
         2. Apply custom transformations (normalize columns, filter, etc.)
         3. Write to standardized bronze Parquet file (naming convention applied here)
 
@@ -38,8 +40,7 @@ class PipelineTransformer:
         standardized naming (bronze/silver) happens.
 
         Args:
-            landing_result: Result from landing validation
-                (contains actual file path with original name)
+            landing_path: todo
             dataset_name: Dataset identifier
             dataset: Dataset configuration
 
@@ -49,9 +50,6 @@ class PipelineTransformer:
         Raises:
             NotImplementedError: If no bronze transformation is registered
         """
-        # Use actual landing file path (with original filename preserved)
-        landing_path = landing_result.path
-
         # Generate standardized bronze path (naming convention applied here)
         bronze_path = dataset.get_bronze_path()
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,7 +58,6 @@ class PipelineTransformer:
             f"Converting to bronze for {dataset_name}",
             extra={
                 "source": str(landing_path),
-                "original_filename": landing_result.original_filename,
                 "dest": str(bronze_path),
             },
         )
@@ -93,13 +90,7 @@ class PipelineTransformer:
             },
         )
 
-        return BronzeResult(
-            path=bronze_path,
-            row_count=row_count,
-            columns=columns,
-            sha256=landing_result.sha256,  # Propagate landing file SHA256
-            archive_sha256=landing_result.archive_sha256,  # Propagate archive SHA256
-        )
+        return BronzeResult(row_count=row_count, columns=columns)
 
     @staticmethod
     def to_silver(
@@ -124,15 +115,12 @@ class PipelineTransformer:
         """
         silver_path = dataset.get_silver_path()
         silver_path.parent.mkdir(parents=True, exist_ok=True)
-        bronze_path = bronze_result.path  # TODO: replace
+        bronze_path = dataset.get_bronze_path()
 
         logger.info(
             f"Transforming to silver for {dataset_name}",
             extra={"source": bronze_path.name},
         )
-
-        # Read bronze parquet file
-        df = pl.read_parquet(bronze_path)
 
         # Apply dataset-specific silver transformation
         transforms = get_silver_transform(dataset_name)
@@ -156,10 +144,4 @@ class PipelineTransformer:
             extra={"rows": row_count, "columns": len(columns)},
         )
 
-        return SilverResult(
-            path=silver_path,
-            row_count=row_count,
-            columns=df.columns,
-            sha256=bronze_result.sha256,  # Propagate from bronze (= landing SHA256)
-            archive_sha256=bronze_result.archive_sha256,  # Propagate archive SHA256
-        )
+        return SilverResult(row_count=row_count, columns=df.columns)

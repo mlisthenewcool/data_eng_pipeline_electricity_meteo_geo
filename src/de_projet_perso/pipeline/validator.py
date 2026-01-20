@@ -53,7 +53,6 @@ class PipelineValidator:
         Args:
             dataset_name: Dataset identifier
             dataset: Dataset configuration
-            data_dir: Root data directory
 
         Returns:
             ValidationResult with validation status and issues
@@ -74,24 +73,6 @@ class PipelineValidator:
         if not expected_path.exists():
             result.issues.append(f"Expected file missing: {expected_path}")
             result.coherent = False
-
-        # Check state coherence
-        if state and state.last_successful_run:
-            silver_stage = state.last_successful_run.stages.get("silver")
-            if silver_stage and silver_stage.path:
-                recorded_path = Path(silver_stage.path)
-                if recorded_path != expected_path:
-                    result.issues.append(
-                        f"Path mismatch - recorded: {recorded_path}, expected: {expected_path}"
-                    )
-                    result.coherent = False
-                    logger.warning(
-                        "State file path mismatch",
-                        extra={
-                            "recorded": str(recorded_path),
-                            "expected": str(expected_path),
-                        },
-                    )
 
         if result.coherent:
             logger.info("State validation passed", extra=result.to_dict())

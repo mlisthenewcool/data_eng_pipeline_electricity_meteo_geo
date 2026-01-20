@@ -18,23 +18,42 @@ Architecture:
     XCom dict → from_xcom() → ExtractionResult → extract_archive()
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Self
+
+from de_projet_perso.pipeline.state import PipelineAction
+from de_projet_perso.utils.remote_checker import RemoteFileInfo
 
 
-class SerializableResult(Protocol):
-    """Protocol for all pipeline stage results.
+@dataclass(frozen=True)
+class CheckMetadataResult:
+    """TODO."""
 
-    All result types must implement to_serializable() to enable
-    conversion to Airflow XCom-compatible dictionaries.
-    """
+    action: PipelineAction
+    remote_file_metadata: RemoteFileInfo
 
-    def to_serializable(self) -> dict[str, Any]:
-        """Convert to dictionary for Airflow XCom serialization."""
-        ...
+    def to_serializable(self) -> dict[str, str | int | datetime | None]:
+        """Convert to dict for Airflow XCom serialization."""
+        return {
+            "action": self.action.value,
+            "etag": self.remote_file_metadata.etag,
+            "last_modified": self.remote_file_metadata.last_modified,
+            "content_length": self.remote_file_metadata.content_length,
+        }
+
+    @classmethod
+    def from_dict(cls, _dict: dict[str, Any]) -> Self:
+        """Convert from dict for Airflow XCom deserialization."""
+        return cls(
+            action=PipelineAction(_dict["action"]),
+            remote_file_metadata=RemoteFileInfo(
+                etag=_dict["etag"],
+                last_modified=_dict["last_modified"],
+                content_length=_dict["content_length"],
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -45,26 +64,28 @@ class DownloadResult:
         path: Path to downloaded file (archive or final file)
         sha256: SHA256 hash of downloaded content
         size_mib: File size in mebibytes
-        original_filename: Original filename from server (Content-Disposition or URL)
     """
 
     path: Path
     sha256: str
     size_mib: float
-    original_filename: str
 
     def to_serializable(self) -> dict[str, str | float]:
-        """Convert to dict for Airflow XCom serialization.
-
-        Returns:
-            Dict with string/numeric values only (Path → str)
-        """
+        """Convert to dict for Airflow XCom serialization."""
         return {
             "path": str(self.path),
             "sha256": self.sha256,
             "size_mib": self.size_mib,
-            "original_filename": self.original_filename,
         }
+
+    @classmethod
+    def from_dict(cls, _dict: dict[str, Any]) -> Self:
+        """Convert from dict for Airflow XCom deserialization."""
+        return cls(
+            path=Path(_dict["path"]),
+            sha256=_dict["sha256"],
+            size_mib=_dict["size_mib"],
+        )
 
 
 @dataclass(frozen=True)
@@ -79,73 +100,35 @@ class ExtractionResult:
         - extracted_sha256 == archive_sha256 (same file)
 
     Attributes:
-        path: Path to extracted file (or original if not archive)
+        archive_path: Path to extracted file (or original if not archive)
+        extracted_file_path: SHA256 of the final extracted file
+        extracted_file_sha256: SHA256 of the source archive (for traceability)
         size_mib: File size in mebibytes
-        extracted_sha256: SHA256 of the final extracted file
-        archive_sha256: SHA256 of the source archive (for traceability)
-        original_filename: Original filename from source
-            (inner_file for archives, server filename for direct downloads)
     """
 
-    path: Path
+    archive_path: Path
+    extracted_file_path: Path
+    extracted_file_sha256: str
     size_mib: float
-    extracted_sha256: str
-    archive_sha256: str
-    original_filename: str
 
-    def to_serializable(self) -> dict[str, str | float]:
-        """Convert to dict for Airflow XCom serialization.
-
-        Returns:
-            Dict with string/numeric values only
-        """
+    def to_serializable(self) -> dict[str, Path | str | float]:
+        """Convert to dict for Airflow XCom serialization."""
         return {
-            "path": str(self.path),
+            "archive_path": str(self.archive_path),
+            "extracted_file_path": str(self.extracted_file_path),
+            "extracted_file_sha256": self.extracted_file_sha256,
             "size_mib": self.size_mib,
-            "extracted_sha256": self.extracted_sha256,
-            "archive_sha256": self.archive_sha256,
-            "original_filename": self.original_filename,
         }
 
-
-@dataclass(frozen=True)
-class LandingResult:
-    """Result from landing layer validation.
-
-    The landing layer stores raw files after download/extraction
-    but before any transformation. This result confirms the file
-    is valid and ready for bronze conversion.
-
-    Attributes:
-        path: Path to validated landing file (preserves original filename)
-        sha256: SHA256 of the file (extracted_sha256 from extraction)
-        size_mib: File size in mebibytes
-        archive_sha256: Original archive SHA256 (for traceability)
-        original_filename: Original filename from source (for audit trail)
-        layer: Always "landing"
-    """
-
-    path: Path
-    sha256: str
-    size_mib: float
-    archive_sha256: str
-    original_filename: str
-    layer: str = "landing"
-
-    def to_serializable(self) -> dict[str, str | float]:
-        """Convert to dict for Airflow XCom serialization.
-
-        Returns:
-            Dict with string/numeric values only
-        """
-        return {
-            "path": str(self.path),
-            "sha256": self.sha256,
-            "size_mib": self.size_mib,
-            "archive_sha256": self.archive_sha256,
-            "original_filename": self.original_filename,
-            "layer": self.layer,
-        }
+    @classmethod
+    def from_dict(cls, _dict: dict[str, Any]) -> Self:
+        """Convert from dict for Airflow XCom deserialization."""
+        return cls(
+            archive_path=Path(_dict["archive_path"]),
+            extracted_file_path=Path(_dict["extracted_file_path"]),
+            extracted_file_sha256=_dict["extracted_file_sha256"],
+            size_mib=_dict["size_mib"],
+        )
 
 
 @dataclass(frozen=True)
@@ -158,35 +141,21 @@ class BronzeResult:
     - Optional custom transformations
 
     Attributes:
-        path: Path to bronze Parquet file
         row_count: Number of rows in dataset
         columns: List of column names (post-normalization)
-        sha256: SHA256 of source file (propagated from landing)
-        archive_sha256: Original archive SHA256 (for traceability)
-        layer: Always "bronze"
     """
 
-    path: Path
     row_count: int
     columns: list[str]
-    sha256: str
-    archive_sha256: str
-    layer: str = "bronze"
 
     def to_serializable(self) -> dict[str, str | int | list[str]]:
-        """Convert to dict for Airflow XCom serialization.
+        """Convert to dict for Airflow XCom serialization."""
+        return {"row_count": self.row_count, "columns": self.columns}
 
-        Returns:
-            Dict with string/numeric/list values only
-        """
-        return {
-            "path": str(self.path),
-            "row_count": self.row_count,
-            "columns": self.columns,
-            "sha256": self.sha256,
-            "archive_sha256": self.archive_sha256,
-            "layer": self.layer,
-        }
+    @classmethod
+    def from_dict(cls, _dict: dict[str, Any]) -> Self:
+        """Convert from dict for Airflow XCom deserialization."""
+        return cls(row_count=_dict["row_count"], columns=_dict["columns"])
 
 
 @dataclass(frozen=True)
@@ -202,32 +171,18 @@ class SilverResult:
     This is the final curated dataset ready for consumption.
 
     Attributes:
-        path: Path to silver Parquet file
         row_count: Number of rows in transformed dataset
         columns: List of column names (post-transformation)
-        sha256: SHA256 of source file (propagated from landing)
-        archive_sha256: Original archive SHA256 (for traceability)
-        layer: Always "silver"
     """
 
-    path: Path
     row_count: int
     columns: list[str]
-    sha256: str
-    archive_sha256: str
-    layer: str = "silver"
 
     def to_serializable(self) -> dict[str, str | int | list[str]]:
-        """Convert to dict for Airflow XCom serialization.
+        """Convert to dict for Airflow XCom serialization."""
+        return {"row_count": self.row_count, "columns": self.columns}
 
-        Returns:
-            Dict with string/numeric/list values only
-        """
-        return {
-            "path": str(self.path),
-            "row_count": self.row_count,
-            "columns": self.columns,
-            "sha256": self.sha256,
-            "archive_sha256": self.archive_sha256,
-            "layer": self.layer,
-        }
+    @classmethod
+    def from_dict(cls, _dict: dict[str, Any]) -> Self:
+        """Convert from dict for Airflow XCom deserialization."""
+        return cls(row_count=_dict["row_count"], columns=_dict["columns"])

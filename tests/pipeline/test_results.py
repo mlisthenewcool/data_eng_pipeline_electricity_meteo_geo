@@ -66,7 +66,7 @@ ensuring proper serialization/deserialization for Airflow XCom.
 #         )
 #
 #         with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
-#             result.sha256 = "new_hash"  # type: ignore
+#             result.sha256 = "new_hash"
 #
 #
 # class TestExtractionResult:

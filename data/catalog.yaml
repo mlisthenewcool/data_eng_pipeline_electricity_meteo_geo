@@ -38,11 +38,12 @@ datasets:
     description: "..."
     source:
       provider: "ODRE"
-      url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/registre-national-installation-production-stockage-electricite-agrege/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
+      # url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/registre-national-installation-production-stockage-electricite-agrege/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
+      url: "https://object.files.data.gouv.fr/hydra-parquet/hydra-parquet/c14e5a7d-2ca6-4ad8-bc61-93889d13fc25.parquet"
       format: "parquet"
     ingestion:
       version: "2025_10_31"
-      frequency: "daily"
+      frequency: "hourly"
       mode: "snapshot"
     storage: "{layer}/odre/installations_{version}.parquet"
 
@@ -69,6 +70,6 @@ datasets:
       format: "json" # "geojson"
     ingestion:
       version: "2026_01_01"
-      frequency: "daily"
+      frequency: "hourly"
       mode: "snapshot"
     storage: "{layer}/meteo_france/stations_{version}.parquet"

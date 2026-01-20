@@ -160,7 +160,7 @@ def extract_filename_from_response(response: httpx.Response, url: str) -> str | 
     return None
 
 
-def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
+def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadResult:
     """Download a file from URL with streaming, progress bar, and SHA256.
 
     Performs memory-efficient download by streaming chunks to disk.
@@ -173,6 +173,7 @@ def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
     Args:
         url: URL of the file to download.
         dest_dir: Directory where the file will be saved (filename extracted from response).
+        default_name: Default name to fallback if any filename could be extracted from server.
 
     Returns:
         DownloadResult with path, sha256, size_mib, and original_filename.
@@ -206,8 +207,10 @@ def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
             # Extract original filename from response headers or URL
             original_filename = extract_filename_from_response(response, url)
             if original_filename is None:
-                # TODO: custom error or fallback name
-                raise Exception("Could not extract original filename")
+                logger.warning(
+                    f"Could not extract original filename, fallback to default: {default_name}"
+                )
+                original_filename = default_name
             dest_path = dest_dir / original_filename
 
             if dest_path.exists():
@@ -227,7 +230,7 @@ def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
                 unit="iB",
                 unit_scale=True,
                 unit_divisor=1024,
-                desc=f"Downloading {original_filename}",
+                desc=f"Downloading {original_filename} (total_size={total_size})",
                 file=TqdmToLoguru(logger.info) if settings.is_running_on_airflow else sys.stderr,
                 leave=False,  # disappears when complete
                 # dynamic_ncols=True,
@@ -256,12 +259,7 @@ def download_to_file(url: str, dest_dir: Path) -> DownloadResult:
                 },
             )
 
-            return DownloadResult(
-                path=dest_path,
-                sha256=sha256_result,
-                size_mib=total_bytes,
-                original_filename=original_filename,
-            )
+            return DownloadResult(path=dest_path, sha256=sha256_result, size_mib=total_bytes)
 
 
 # =============================================================================

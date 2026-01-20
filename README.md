@@ -69,16 +69,19 @@ Voir [README_DX.md](docs/README_DX.md)
     - [x] résoudre les incohérences de nommage de fichiers (avant landing garde les mêmes noms que sur le serveur,
       ce n'est qu'à partir de la couche bronze qu'on renomme avec nos conventions)
     - [ ] basculer sur une architecture de résolution de chemin découplée du Dataset
-        - [ ] retirer la propriété storage du data catalogue
-        - [ ] ajouter classe PipelinePathResolver
+        - [ ] retirer la propriété `storage` du catalogue de données
+        - [ ] ajouter classe PipelinePathResolver (@property landing() → Path...)
+        - [ ] ajouter nom du dataset dans sa définition
 
-- [ ] simplifier pipeline
+- [ ] pipeline
     - [x] passage à 2 DAGs spécifiques (un avec et un sans extraction d'archive)
-    - [ ] retirer tâche "landing" qui est juste là pour les XCom ?
-    - [ ] ajouter class PipelineContext qui réduit le nombre de passages d'arguments et centralise l'info
+    - [x] retirer tâche "landing" qui est juste là pour les XCom ?
+    - ~~[ ] ajouter class PipelineContext qui réduit le nombre de passages d'arguments et centralise l'info~~
     - [ ] documenter choix des Serializer, des transformations et du déroulement logique du pipeline
-    - [ ] créer exemple complet pipeline sans Airflow
-    - [ ] cohérence des arguments passés entre chaque tâche
+    - [x] créer exemple complet pipeline sans Airflow
+    - [x] cohérence des arguments passés entre chaque tâche
+    - [x] passer tous les arguments nécessaires aux métadonnées
+    - [ ] fail-fast si transformations bronze/silver pas enregistrées
 
 - [ ] check_should_run doit arriver après contrôle de la cohérence de l'état actuel ? même tâche ?
     - → check_state
@@ -86,9 +89,9 @@ Voir [README_DX.md](docs/README_DX.md)
         - → sinon → heal_state
             - → download_data → ...
 
-- [ ] ajout mécanisme pour vérifier la "fraîcheur" des données
-    - [ ] requête HEAD si possible
-    - [ ] comparaison hash_sha256
+- [x] ajout mécanisme pour vérifier la "fraîcheur" des données
+    - [x] requête HEAD si possible
+    - [x] comparaison hash_sha256
 
 - [ ] complexité du state management: on gère un système indépendant + celui de Airflow
     - [ ] vérifier qu'on ne puisse pas tout passer sous Airflow (vérifier sha256 pour sûr, autre chose ?)
@@ -99,7 +102,12 @@ Voir [README_DX.md](docs/README_DX.md)
 
 - [x] cohérence entre ExtractionInfo et ExtractionResult
 
+- [ ] normalement OK d'utiliser short_circuit même sans renvoyer explicitement `True` car le dictionnaire suivant ne
+  sera (jamais ?) interprété à `False`. Idem pour la tâche download_and_check_hash_task
+
 ## Priorité 2
+
+- [ ] résoudre bug affichage des logs dans airflow pour le niveau DEBUG
 
 - [ ] comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant le parsing
   des DAGS ?
@@ -120,6 +128,8 @@ Voir [README_DX.md](docs/README_DX.md)
 
 - [ ] mettre en place politique de rétention pour la couche bronze
 - [ ] ajout des documentations des données avec les anciens fichiers
+
+- [ ] regarder @setup & @teardown pour le cleanup Airflow
 
 - [ ] tests/
     - [ ] transfert ancien downloader

@@ -115,6 +115,8 @@ def get_silver_transform(dataset_name: str) -> SilverTransformFunc | None:
 try:
     from de_projet_perso.pipeline.transformations import (  # noqa: F401
         ign_contours_iris,
+        meteo_france_stations,
+        odre_eco2mix_cons_def,
         odre_installations,
     )
 except ImportError as e:
@@ -131,5 +133,4 @@ __all__ = [
     "get_silver_transform",
     "BronzeTransformFunc",
     "SilverTransformFunc",
-    "TransformFunction",  # Legacy alias
 ]

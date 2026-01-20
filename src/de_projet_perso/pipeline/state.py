@@ -30,67 +30,69 @@ When to reconsider this approach:
   - Need for long-term historical analysis (> 6 months)
 """
 
+from dataclasses import field
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
 
 from de_projet_perso.core.models import StrictModel
 from de_projet_perso.core.settings import settings
 
 
 class PipelineAction(StrEnum):
-    """Actions possibles pour un pipeline."""
+    """Actions possibles pour un pipeline.
+
+    Simplified version - relies on Airflow native features and smart skip logic:
+    - FIRST_RUN: Initial execution (no state file exists)
+    - REFRESH: Remote file changed OR scheduled refresh (data stale)
+    - SKIP: Remote unchanged AND SHA256 unchanged (smart skip)
+
+    Removed actions (handled differently):
+    - HEAL: Manual trigger or monitoring DAG (inline validation in tasks)
+    - RETRY: Handled by Airflow native retry mechanism (retries=N)
+    """
 
     FIRST_RUN = "first_run"  # Première exécution (pas de state)
-    HEAL = "heal"  # Fichier manquant sur disque
-    RETRY = "retry"  # Dernière exécution a échoué
-    REFRESH = "refresh"  # Données périmées (fréquence + vérification source)
-    SKIP = "skip"  # Tout est OK
+    REFRESH = "refresh"  # Données périmées ou fichier distant changé
+    SKIP = "skip"  # Tout est OK (remote + SHA256 inchangés)
 
 
-class Stage(StrEnum):
-    """Étapes du pipeline."""
-
-    DOWNLOAD = "download"
-    EXTRACT = "extract"
-    LANDING = "landing"
-    BRONZE = "bronze"
-    SILVER = "silver"
-
-
-class StageStatus(StrictModel):
-    """Statut d'une étape du pipeline."""
-
-    status: Literal["success", "failed", "pending"]
-    duration_seconds: float | None = None
-    timestamp: datetime | None = None
-    path: str | None = None
-    error: str | None = None
-
-    # Métadonnées spécifiques
-    sha256: str | None = None
-    file_size_bytes: int | None = None
-    row_count: int | None = None
-    columns: list[str] | None = None
-    original_filename: str | None = None  # Original filename from source (landing layer)
+# class Stage(StrEnum):
+#     """Étapes du pipeline."""
+#
+#     DOWNLOAD = "download"
+#     EXTRACT = "extract"
+#     LANDING = "landing"
+#     BRONZE = "bronze"
+#     SILVER = "silver"
 
 
 class RunRecord(StrictModel):
     """Enregistrement d'une exécution réussie."""
 
-    timestamp: datetime
-    run_id: str
+    timestamp: datetime = field(default_factory=datetime.now)
     version: str
-    duration_seconds: float
-    stages: dict[str, StageStatus]
+
+    # from metadata check
+    etag: str | None
+    last_modified: datetime | None
+    content_length: int | None
+
+    # from download or extraction
+    sha256: str
+    file_size_mib: float
+
+    # from silver
+    row_count: int
+    columns: list[str]
 
 
 class FailedRunRecord(StrictModel):
     """Enregistrement d'une exécution échouée."""
 
-    timestamp: datetime
-    run_id: str
+    timestamp: datetime = field(default_factory=datetime.now)
+    version: str
+
     stage_failed: str
     error: str
     traceback: str | None = None
@@ -103,7 +105,7 @@ class PipelineState(StrictModel):
     current_version: str
     last_successful_run: RunRecord | None = None
     last_failed_run: FailedRunRecord | None = None
-    history: list[dict] = []
+    # history: list[dict] = [] # TODO: implémenter logique
 
 
 class PipelineStateManager:
@@ -139,40 +141,41 @@ class PipelineStateManager:
         cls,
         dataset_name: str,
         version: str,
-        silver_path: Path,
+        etag: str | None,
+        last_modified: datetime | None,
+        content_length: int | None,
+        sha256: str,
+        file_size_mib: float,
         row_count: int,
         columns: list[str],
-        sha256: str,
     ) -> None:
         """Update pipeline state after successful run.
 
         Args:
             dataset_name: Dataset identifier
             version: Dataset version
-            silver_path: Path to silver layer file
+            etag: ...
+            last_modified: ...
+            content_length: ...
+            sha256: SHA256 hash of source file
+            file_size_mib: ...
             row_count: Number of rows in dataset
             columns: List of column names
-            sha256: SHA256 hash of source file
         """
         state = cls.load(dataset_name)
+
         if state is None:
             state = cls.create_new(dataset_name, version)
 
         state.last_successful_run = RunRecord(
-            timestamp=datetime.now(),
-            run_id=f"{dataset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             version=version,
-            duration_seconds=0,  # Would need to track actual duration
-            stages={
-                "silver": StageStatus(
-                    status="success",
-                    timestamp=datetime.now(),
-                    path=str(silver_path),
-                    row_count=row_count,
-                    columns=columns,
-                    sha256=sha256,
-                )
-            },
+            etag=etag,
+            last_modified=last_modified,
+            content_length=content_length,
+            sha256=sha256,
+            file_size_mib=file_size_mib,
+            row_count=row_count,
+            columns=columns,
         )
 
         cls.save(state)

@@ -11,7 +11,7 @@ from de_projet_perso.pipeline.transformations import register_bronze, register_s
 
 
 @register_bronze("ign_contours_iris")
-def transform_bronze_ign_iris(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
+def transform_bronze(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
     """Bronze transformation for IGN Contours IRIS.
 
     Reads GeoPackage from landing layer (with original filename preserved)
@@ -30,25 +30,30 @@ def transform_bronze_ign_iris(dataset: Dataset, landing_path: Path) -> pl.DataFr
         extra={"landing_path": str(landing_path), "filename": landing_path.name},
     )
 
-    conn = duckdb.connect()
+    # TODO: DuckDB queries hang in Airflow forever but not on local execution ...
+    #  ST_AsWKB(geometrie) AS geom_wkb
+    #  ST_AsGeoJSON(geometrie) AS geom_json
+    conn = duckdb.connect(":memory:")
     conn.execute("INSTALL spatial; LOAD spatial;")
-    # ST_AsGeoJSON(geometrie) AS geom_json
+    conn.execute("SET memory_limit = '1GB'")
+    conn.execute("SET threads = 2")
+
     # noinspection SqlResolve
     query = """
-        SELECT
-            * EXCLUDE (geometrie),
-            ST_AsWKB(geometrie) AS geom_wkb
-        FROM st_read(?, layer = 'contours_iris')
-    """
-    logger.info("DuckDB spatial query started")
+SELECT\
+    cleabs, code_insee, nom_commune, iris, code_iris, nom_iris, type_iris,\
+    ST_AsWKB(geometrie) AS geom_wkb \
+FROM ST_read(?, layer = 'contours_iris')
+"""
+    logger.debug("Executing DuckDB spatial query ...", extra={"query": query})
     df = conn.execute(query, parameters=[str(landing_path)]).pl()
-    logger.info("DuckDB spatial query completed", extra={"rows": len(df)})
-
-    return df.filter(pl.col("code_iris").is_not_null())
+    logger.debug("DuckDB spatial query completed", extra={"n_rows": len(df), "columns": df.columns})
+    conn.close()
+    return df
 
 
 @register_silver("ign_contours_iris")
-def transform_silver_ign_iris(dataset: Dataset) -> pl.DataFrame:
+def transform_silver(dataset: Dataset) -> pl.DataFrame:
     """Silver transformation for IGN Contours IRIS.
 
     Reads from standardized bronze Parquet and applies business transformations.
