@@ -60,7 +60,7 @@ class TestLoguruLogger:
         LoguruLogger(level="DEBUG").exception(message="no exception")
         output = capsys.readouterr().err
         assert "no exception" in output
-        assert "You called logger.exception() with no active exception." in output
+        assert "You called logger.exception() with no active exception" in output
 
 
 class TestFormatExtra:

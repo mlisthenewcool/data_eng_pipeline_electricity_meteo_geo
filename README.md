@@ -71,7 +71,8 @@ Voir [README_DX.md](docs/README_DX.md)
     - [ ] basculer sur une architecture de résolution de chemin découplée du Dataset
         - [ ] retirer la propriété `storage` du catalogue de données
         - [ ] ajouter classe PipelinePathResolver (@property landing() → Path...)
-        - [ ] ajouter nom du dataset dans sa définition
+        - [x] ajouter nom du dataset dans sa définition
+        - [ ] uniformiser les chemins entre landing & les autres couches
 
 - [ ] pipeline
     - [x] passage à 2 DAGs spécifiques (un avec et un sans extraction d'archive)
@@ -102,8 +103,12 @@ Voir [README_DX.md](docs/README_DX.md)
 
 - [x] cohérence entre ExtractionInfo et ExtractionResult
 
-- [ ] normalement OK d'utiliser short_circuit même sans renvoyer explicitement `True` car le dictionnaire suivant ne
+- [x] normalement OK d'utiliser short_circuit même sans renvoyer explicitement `True` car le dictionnaire suivant ne
   sera (jamais ?) interprété à `False`. Idem pour la tâche download_and_check_hash_task
+- [ ] documenter le comportement ci-dessus
+
+- [ ] transformations silver
+    - [ ] data quality (GX ou Soda Core ou autre librairie ?)
 
 ## Priorité 2
 
@@ -123,16 +128,13 @@ Voir [README_DX.md](docs/README_DX.md)
 
 - [ ] modifier les raise ... from e
 
-- [ ] ajout d'un type pour le nom des layers (StrEnum)
-- [ ] uniformiser les chemins entre landing & les autres couches
+- ~~[ ] ajout d'un type pour le nom des layers (StrEnum)~~
 
 - [ ] mettre en place politique de rétention pour la couche bronze
 - [ ] ajout des documentations des données avec les anciens fichiers
-
 - [ ] regarder @setup & @teardown pour le cleanup Airflow
 
 - [ ] tests/
-    - [ ] transfert ancien downloader
     - [ ] test_logger
         - [ ] vérifier la redirection vers Airflow
         - [ ] vérifier que passer un objet non mutable à la méthode _format_extra ne change rien
@@ -141,6 +143,7 @@ Voir [README_DX.md](docs/README_DX.md)
 
 ### Priorité 4
 
+- [ ] ajouter Observabilité/SLA/Alerts/OpenTelemetry
 - [ ] ajout métrique de performances
 - [ ] [ajouter configuration Open Lineage](https://airflow.apache.org/docs/apache-airflow-providers-openlineage/stable/guides/user.html)
 - [ ] si besoin de paralléliser, regarder @task.map
