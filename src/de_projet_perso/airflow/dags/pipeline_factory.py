@@ -84,9 +84,3 @@ def _generate_all_dags() -> dict[str, DAG]:
 # Airflow scans module globals for DAG objects
 # We must expose each DAG individually in the module namespace
 _all_dags = _generate_all_dags()
-
-# # Expose each DAG as a module-level global
-# for _dag_name, _dag_obj in _all_dags.items():
-#     # This makes each DAG accessible at module level
-#     # e.g., globals()['ign_contours_iris'] = _dag_obj
-#     globals()[_dag_name] = _dag_obj

@@ -50,6 +50,10 @@ class Settings(BaseSettings):
         default="DEBUG", description="The logger verbosity level"
     )
 
+    bronze_retention_days: int = Field(
+        default=365, description="Retention period for bronze layer (days)"
+    )
+
     # =========================================================================
     # Airflow config
     # =========================================================================
@@ -164,6 +168,16 @@ class Settings(BaseSettings):
         description="Chunk size for file hashing (bytes)",
         gt=0,
         le=1024 * 1024,  # Max 1 MB
+    )
+
+    # =========================================================================
+    # Bronze Retention Settings
+    # =========================================================================
+    bronze_retention_days: int = Field(
+        default=365,  # 1 year
+        description="Number of days to retain bronze layer versions",
+        gt=0,
+        le=3650,  # Max 10 years
     )
 
     # =========================================================================

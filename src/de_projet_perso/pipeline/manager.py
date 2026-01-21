@@ -9,16 +9,17 @@ Key features:
 - Recalculate SHA256 after extraction (detects corruption)
 - Propagate both archive and extracted file hashes for traceability
 
-Architecture changes:
+Architecture:
 - Landing layer integration: download() and extract_archive() write directly
   to landing/ directory (no separate validate_landing step needed)
-- LandingResult removed: ExtractionResult serves both purposes
+- Uses PathResolver for all path operations
 """
 
 from pathlib import Path
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
+from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.pipeline.results import CheckMetadataResult, DownloadResult, ExtractionResult
 from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
 from de_projet_perso.utils.downloader import (
@@ -63,7 +64,7 @@ class PipelineManager:
 
         # 3. FIRST_RUN: No previous state
         if state is None or state.last_successful_run is None:
-            logger.debug(f"No previous successful run found for {dataset.name}, will run")
+            logger.info(f"No previous successful run found for {dataset.name}, will run")
 
             return CheckMetadataResult(
                 action=PipelineAction.FIRST_RUN,
@@ -87,8 +88,8 @@ class PipelineManager:
 
         # SKIP: Remote unchanged
         if not changed_result.has_changed:
-            logger.debug(
-                f"Pipeline skipped for {dataset.source}: remote unchanged",
+            logger.info(
+                f"Pipeline skipped for {dataset.name}: remote unchanged",
                 extra={
                     "reason": changed_result.reason,
                     "etag": remote_info.etag,
@@ -96,13 +97,14 @@ class PipelineManager:
                         remote_info.last_modified.isoformat() if remote_info.last_modified else None
                     ),
                     "content_length": remote_info.content_length,
+                    "last_successful_run": state.last_successful_run.model_dump(),
                 },
             )
             # Short-circuit: skip all downstream tasks
             return CheckMetadataResult(action=PipelineAction.SKIP, remote_file_metadata=remote_info)
 
         # REFRESH: Remote changed
-        logger.debug(
+        logger.info(
             f"Pipeline will execute for {dataset.name}: remote changed",
             extra={
                 "reason": changed_result.reason,
@@ -119,7 +121,7 @@ class PipelineManager:
         )
 
     @staticmethod
-    def download(dataset: Dataset) -> DownloadResult:
+    def download(dataset: Dataset, run_version: str) -> DownloadResult:
         """Download source file from URL.
 
         Downloads to landing directory preserving original filename from server.
@@ -127,21 +129,25 @@ class PipelineManager:
 
         Args:
             dataset: Dataset configuration
+            run_version: Run version for path resolution (Airflow template or explicit)
 
         Returns:
             DownloadResult with path, sha256, size, and original_filename
         """
         # Get landing directory (not file path - preserves original filename)
-        landing_dir = dataset.get_landing_dir()
+        resolver = PathResolver(
+            dataset_name=dataset.name,
+            run_version=run_version,
+        )
 
         return download_to_file(
             url=dataset.source.url_as_str,
-            dest_dir=landing_dir,
-            default_name=f"{dataset.ingestion.version}.{dataset.source.format.value}",
+            dest_dir=resolver.landing_dir(),
+            default_name=f"{run_version}.{dataset.source.format.value}",
         )
 
     @staticmethod
-    def extract_archive(archive_path: Path, dataset: Dataset) -> ExtractionResult:
+    def extract_archive(dataset: Dataset, archive_path: Path) -> ExtractionResult:
         """Extract archive and recalculate SHA256.
 
         For archive formats (7z):
@@ -214,11 +220,11 @@ class PipelineManager:
             bool: False to short-circuit if SHA256 unchanged (SKIP downstream)
         """
         # TODO: passer seulement le hash en paramètre et laisser la task Airflow nettoyer les
-        #  fichiers car il vaudrait mieux séparer les deux DAGs
+        #  fichiers car il serait mieux de séparer les deux DAGs
         state = PipelineStateManager.load(dataset_name)
 
         if not state or not state.last_successful_run:
-            logger.debug(f"Could not find a previous successful run for {dataset_name}")
+            logger.info(f"Could not find a previous successful run for {dataset_name}")
             return True
 
         # find the correct hash to compare with
@@ -230,11 +236,11 @@ class PipelineManager:
             known_sha256 = download_or_extract_result.sha256
 
         if known_sha256 != state.last_successful_run.sha256:
-            logger.debug(f"Hash changed for {dataset_name}: processing new data")
+            logger.info(f"Hash changed for {dataset_name}: processing new data")
             return True
 
         # hash unchanged - data is identical (false change)
-        logger.debug(f"Hash unchanged for {dataset_name}: false change detected")
+        logger.info(f"Hash unchanged for {dataset_name}: false change detected")
 
         # Cleanup downloaded file (duplicate)
         try:
@@ -248,5 +254,5 @@ class PipelineManager:
                 "Failed to remove duplicate file (non-critical)", extra={"error": str(e)}
             )
 
-        logger.debug("Removed duplicate downloaded file")
+        logger.info("Removed duplicate downloaded file")
         return False

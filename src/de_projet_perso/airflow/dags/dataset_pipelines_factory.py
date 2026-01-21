@@ -32,6 +32,7 @@ from typing import Any
 from airflow.sdk import DAG, Asset, Metadata, dag, task
 
 from de_projet_perso.core.data_catalog import Dataset
+from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.pipeline.manager import PipelineManager
 from de_projet_perso.pipeline.results import (
     BronzeResult,
@@ -39,7 +40,7 @@ from de_projet_perso.pipeline.results import (
     DownloadResult,
     ExtractionResult,
 )
-from de_projet_perso.pipeline.state import PipelineStateManager
+from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
 from de_projet_perso.pipeline.transformer import PipelineTransformer
 
 # =============================================================================
@@ -49,17 +50,17 @@ from de_projet_perso.pipeline.transformer import PipelineTransformer
 DEFAULT_ARGS: dict[str, Any] = {
     "owner": "data-engineering",
     "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    "retry_delay": timedelta(seconds=5),
     "retry_exponential_backoff": True,
-    "max_retry_delay": timedelta(minutes=30),
-    "execution_timeout": timedelta(hours=2),
-    "depends_on_past": False,
+    "max_retry_delay": timedelta(minutes=10),
+    "execution_timeout": timedelta(minutes=30),
+    "depends_on_past": True,
 }
 
 # Task-specific timeouts (override defaults)
-DOWNLOAD_TIMEOUT = timedelta(hours=1)
-EXTRACT_TIMEOUT = timedelta(minutes=30)
-TRANSFORM_TIMEOUT = timedelta(minutes=45)
+DOWNLOAD_TIMEOUT = timedelta(minutes=30)
+EXTRACT_TIMEOUT = timedelta(minutes=5)
+TRANSFORM_TIMEOUT = timedelta(minutes=5)
 
 
 # =============================================================================
@@ -91,7 +92,7 @@ def _create_error_dag(dag_id: str, error_message: str) -> DAG:
         start_date=datetime(2025, 1, 1),
         catchup=False,
         tags=["error", "data-pipeline", "needs-attention"],
-        default_args={"owner": "data-engineering"},
+        default_args=DEFAULT_ARGS,
     )
     def error_dag() -> None:
         @task
@@ -118,14 +119,16 @@ def _create_asset_for_dataset(dataset: Dataset) -> Asset:
     Returns:
         Asset configured for the silver layer output
     """
+    # Create resolver to get silver path (with current version - generic path)
+    resolver = PathResolver(dataset_name=dataset.name, run_version="current")
+
     return Asset(
         name=f"{dataset.name}_silver",
-        uri=f"file:///{dataset.get_silver_path()}",
+        uri=f"file:///{resolver.silver_current_path()}",
         group="data-pipeline",
         extra={
-            "provider": dataset.source.provider,
+            "dataset_name": dataset.name,
             "format": str(dataset.source.format),
-            "version": dataset.ingestion.version,
             "description": dataset.description,
         },
     )
@@ -156,17 +159,22 @@ def create_common_tasks(dataset: Dataset, asset: Asset) -> dict[str, Any]:
     def check_remote_changed() -> dict[str, Any] | bool:
         """TODO."""
         ctx = PipelineManager.has_dataset_metadata_changed(dataset)
-        return False if not ctx else ctx.to_serializable()
+        return False if ctx.action == PipelineAction.SKIP else ctx.to_serializable()
 
     @task.short_circuit(
         task_id="download_and_check_hash",
         execution_timeout=DOWNLOAD_TIMEOUT,  # TODO: mettre dans settings
         retries=3,  # TODO: mettre dans settings
     )
-    def download_then_check_hash_task(metadata_dict: dict) -> dict | bool:
-        """TODO."""
+    def download_then_check_hash_task(metadata_dict: dict, run_version: str) -> dict | bool:
+        """Download and check if SHA256 changed.
+
+        Args:
+            metadata_dict: Remote metadata from check_remote_changed
+            run_version: Airflow template variable ({{ ds }} or {{ ts_nodash }})
+        """
         _metadata = CheckMetadataResult.from_dict(metadata_dict)
-        download = PipelineManager.download(dataset)
+        download = PipelineManager.download(dataset, run_version)
         has_changed = PipelineManager.has_hash_changed(dataset.name, download)
 
         if not has_changed:
@@ -179,13 +187,14 @@ def create_common_tasks(dataset: Dataset, asset: Asset) -> dict[str, Any]:
         outlets=[asset],
         execution_timeout=TRANSFORM_TIMEOUT,
     )
-    def transform_to_silver_task(bronze_dict: dict):
+    def transform_to_silver_task(bronze_dict: dict, run_version: str):
         """Apply business transformations and emit Asset metadata.
 
         This is the ONLY task that emits Metadata (Airflow 3.x best practice).
 
         Args:
             bronze_dict: PipelineContext from previous task (contains bronze result)
+            run_version: Airflow template variable ({{ ds }} or {{ ts_nodash }})
 
         Yields:
             Metadata for the silver Asset with enriched information
@@ -193,10 +202,10 @@ def create_common_tasks(dataset: Dataset, asset: Asset) -> dict[str, Any]:
         bronze = BronzeResult.from_dict(bronze_dict)
 
         # Transform to silver
-        silver = PipelineTransformer.to_silver(bronze_result=bronze, dataset=dataset)
+        silver = PipelineTransformer.to_silver(
+            bronze_result=bronze, dataset=dataset, run_version=run_version
+        )
 
-        # TODO: qu'est-ce qui est vraiment important ?
-        #  retirer les doublons par rapport au PipelineContext
         # Note: trick the analyzer
         sha256 = bronze_dict.get("extracted_file_sha256") or bronze_dict.get("sha256")
         if not sha256:
@@ -206,7 +215,7 @@ def create_common_tasks(dataset: Dataset, asset: Asset) -> dict[str, Any]:
 
         PipelineStateManager.update_success(
             dataset_name=dataset.name,
-            version=dataset.ingestion.version,
+            version=run_version,
             etag=bronze_dict.get("etag"),
             last_modified=bronze_dict.get("last_modified"),
             content_length=bronze_dict.get("content_length"),
@@ -221,7 +230,7 @@ def create_common_tasks(dataset: Dataset, asset: Asset) -> dict[str, Any]:
         yield Metadata(
             asset=asset,
             extra={
-                "version": dataset.ingestion.version,
+                "run_version": run_version,
                 # metadata: integrity & traceability
                 "etag": bronze_dict.get("etag"),
                 "last_modified": bronze_dict.get("last_modified"),
@@ -257,7 +266,7 @@ def create_simple_tasks(dataset: Dataset) -> dict[str, Any]:
         task_id="convert_to_bronze",
         execution_timeout=TRANSFORM_TIMEOUT,
     )
-    def convert_to_bronze_task(download_dict: dict) -> dict:
+    def convert_to_bronze_task(download_dict: dict, run_version: str) -> dict:
         """Convert landing file to Parquet with normalized column names.
 
         Inline validation: Verifies that the extracted/landing file exists
@@ -266,6 +275,7 @@ def create_simple_tasks(dataset: Dataset) -> dict[str, Any]:
 
         Args:
             download_dict: PipelineContext from previous task (contains extraction result)
+            run_version: Airflow template variable ({{ ds }} or {{ ts_nodash }})
 
         Returns:
             Updated PipelineContext with bronze result
@@ -292,7 +302,7 @@ def create_simple_tasks(dataset: Dataset) -> dict[str, Any]:
         return (
             download_dict
             | PipelineTransformer.to_bronze(
-                landing_path=download.path, dataset=dataset
+                landing_path=download.path, dataset=dataset, run_version=run_version
             ).to_serializable()
         )
 
@@ -322,9 +332,7 @@ def create_archive_tasks(dataset: Dataset) -> dict[str, Any]:
             Updated PipelineContext with extraction result
         """
         download = DownloadResult.from_dict(download_dict)
-
-        extract = PipelineManager.extract_archive(archive_path=download.path, dataset=dataset)
-
+        extract = PipelineManager.extract_archive(dataset=dataset, archive_path=download.path)
         has_changed = PipelineManager.has_hash_changed(dataset.name, extract)
 
         if not has_changed:
@@ -336,7 +344,7 @@ def create_archive_tasks(dataset: Dataset) -> dict[str, Any]:
         task_id="convert_to_bronze",
         execution_timeout=TRANSFORM_TIMEOUT,
     )
-    def convert_to_bronze_task(extraction_dict: dict) -> dict:
+    def convert_to_bronze_task(extraction_dict: dict, run_version: str) -> dict:
         """Convert landing file to Parquet with normalized column names.
 
         Inline validation: Verifies that the extracted/landing file exists
@@ -345,6 +353,7 @@ def create_archive_tasks(dataset: Dataset) -> dict[str, Any]:
 
         Args:
             extraction_dict: PipelineContext from previous task (contains extraction result)
+            run_version: Airflow template variable ({{ ds }} or {{ ts_nodash }})
 
         Returns:
             Updated PipelineContext with bronze result
@@ -373,6 +382,7 @@ def create_archive_tasks(dataset: Dataset) -> dict[str, Any]:
             | PipelineTransformer.to_bronze(
                 landing_path=extraction.extracted_file_path,
                 dataset=dataset,
+                run_version=run_version,
             ).to_serializable()
         )
 
@@ -417,10 +427,9 @@ def create_simple_dag(dataset: Dataset, asset: Asset) -> DAG:
         doc_md=f"""
 ## Dataset Pipeline: {dataset.name}
 
-**Provider:** {dataset.source.provider}
 **Format:** {dataset.source.format}
 **Frequency:** {dataset.ingestion.frequency}
-**Version:** {dataset.ingestion.version}
+**Version Strategy:** Dynamic ({{ ds }} or {{ ts_nodash }} based on frequency)
 
 ### Smart Skip Logic (2-Stage)
 
@@ -475,15 +484,18 @@ def create_simple_dag(dataset: Dataset, asset: Asset) -> DAG:
         - For non-archive: download_and_check_hash populates both download AND extraction
         - Passed through bronze and silver tasks
         """
+        # Get run version template
+        run_version = dataset.ingestion.frequency.get_airflow_version_template()
+
         # 1. Check remote (HTTP HEAD) - short-circuit if unchanged
         context = tasks["check_remote_changed"]()
 
         # 2. Download + SHA256 check - short-circuit if identical
-        download = tasks["download_then_check_hash"](context)
+        download = tasks["download_then_check_hash"](context, run_version)
 
         # 3. Transformations (bronze → silver)
-        bronze = tasks["convert_to_bronze"](download)
-        _silver = tasks["transform_to_silver"](bronze)  # Final task with Asset outlet
+        bronze = tasks["convert_to_bronze"](download, run_version)
+        _silver = tasks["transform_to_silver"](bronze, run_version)  # Final task with Asset outlet
 
     return dataset_pipeline()
 
@@ -538,17 +550,20 @@ def create_archive_dag(dataset: Dataset, asset: Asset) -> DAG:
         - extract_archive populates extraction
         - Passed through bronze and silver tasks
         """
+        # Get run version template
+        run_version = dataset.ingestion.frequency.get_airflow_version_template()
+
         # 1. Check remote (HTTP HEAD) - short-circuit if unchanged
         context = tasks["check_remote_changed"]()
 
         # 2. Download + SHA256 check - short-circuit if identical
-        download = tasks["download_then_check_hash"](context)
+        download = tasks["download_then_check_hash"](context, run_version)
 
         # 3. Extract archive (7z → landing file)
         extract = tasks["extract_archive_then_check_hash"](download)
 
         # 4. Transformations (bronze → silver)
-        bronze = tasks["convert_to_bronze"](extract)
-        _silver = tasks["transform_to_silver"](bronze)  # Final task with Asset outlet
+        bronze = tasks["convert_to_bronze"](extract, run_version)
+        _silver = tasks["transform_to_silver"](bronze, run_version)  # Final task with Asset outlet
 
     return dataset_pipeline()

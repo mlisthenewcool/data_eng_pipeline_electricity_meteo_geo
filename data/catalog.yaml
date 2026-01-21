@@ -16,6 +16,18 @@
 #    refine.nature: "Données consolidées"
 
 
+#datasets:
+#  ign_contours_iris:
+#    description: "..."
+#    source:
+#      provider: "IGN"
+#      url: "..."
+#      format: "7z"
+#      inner_file: "iris.gpkg"
+#    ingestion:
+#      frequency: "daily"
+#      mode: "snapshot"
+
 
 
 datasets:
@@ -27,49 +39,45 @@ datasets:
       format: "7z"
       inner_file: "iris.gpkg"
     ingestion:
-      version: "2025_01_01"
-      frequency: "hourly"
+      frequency: "daily"
       mode: "snapshot"
-    storage: "{layer}/ign/contours_iris_{version}.parquet"
-  #      dir: "{layer}/ign/"
-  #      file: "contours_iris_{version}.parquet"
 
   odre_installations:
-    description: "..."
+    description: "Registre national des installations de production et stockage d'électricité"
     source:
       provider: "ODRE"
-      # url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/registre-national-installation-production-stockage-electricite-agrege/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
       url: "https://object.files.data.gouv.fr/hydra-parquet/hydra-parquet/c14e5a7d-2ca6-4ad8-bc61-93889d13fc25.parquet"
       format: "parquet"
     ingestion:
-      version: "2025_10_31"
-      frequency: "hourly"
+      frequency: "daily"
       mode: "snapshot"
-    storage: "{layer}/odre/installations_{version}.parquet"
 
   odre_eco2mix_cons_def:
-    description: "..."
+    description: "Production électrique régionale eco2mix (consolidées et définitives)"
     source:
       provider: "ODRE"
       url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-regional-cons-def/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
       format: "parquet"
     ingestion:
-      version: "2026_01_01"
-      frequency: "hourly"
+      frequency: "daily"
       mode: "snapshot"
-      # mode: "incremental"
-      # incremental_key: "date_heure"
-    # storage: "{layer}/odre/eco2mix_cons_def/{timestamp}.parquet"
-    storage: "{layer}/odre/eco2mix_cons_def/{version}.parquet"
+
+  odre_eco2mix_tr:
+    description: "Production électrique régionale eco2mix (temps réel)"
+    source:
+      provider: "ODRE"
+      url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-regional-tr/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
+      format: "parquet"
+    ingestion:
+      frequency: "daily"
+      mode: "snapshot"
 
   meteo_france_stations:
-    description: "..."
+    description: "Liste et localisation des stations météorologiques Météo France"
     source:
-      provider: "Météo France"
+      provider: "MétéoFrance"
       url: "https://www.data.gouv.fr/api/1/datasets/r/1fe544d8-4615-4642-a307-5956a7d90922"
-      format: "json" # "geojson"
+      format: "json"
     ingestion:
-      version: "2026_01_01"
-      frequency: "hourly"
+      frequency: "daily"
       mode: "snapshot"
-    storage: "{layer}/meteo_france/stations_{version}.parquet"

@@ -22,6 +22,7 @@ from de_projet_perso.core.exceptions import (
     FileNotFoundInArchiveError,
 )
 from de_projet_perso.core.logger import logger
+from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.manager import PipelineManager
 from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
@@ -42,6 +43,12 @@ if __name__ == "__main__":
     _dataset = _catalog.get_dataset(__dataset_name)
 
     # ==============================
+    # Step 0: Prepare version & PathResolver
+    # ==============================
+    _run_version = _dataset.ingestion.frequency.format_datetime_as_version(start_time)
+    _path_resolver = PathResolver(dataset_name=_dataset.name, run_version=_run_version)
+
+    # ==============================
     # Step 1: Check if metadata changed
     # ==============================
     logger.info("=" * 80)
@@ -50,8 +57,6 @@ if __name__ == "__main__":
     _metadata = PipelineManager.has_dataset_metadata_changed(_dataset)
     if _metadata.action == PipelineAction.SKIP:
         _state = PipelineStateManager.load(_dataset.name)
-        if _state:
-            logger.info("Pipeline will be skipped (data is up to date)", extra=_state.model_dump())
         sys.exit(0)
 
     logger.info(
@@ -66,7 +71,7 @@ if __name__ == "__main__":
     logger.info("Downloading dataset...")
     logger.info("=" * 80)
     try:
-        _download = PipelineManager.download(_dataset)
+        _download = PipelineManager.download(_dataset, _run_version)
     except httpx.HTTPStatusError as e:
         logger.exception(
             f"Download failed. Server returned code: {e.response.status_code}",
@@ -137,7 +142,9 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to bronze layer...")
     logger.info("=" * 80)
-    _bronze = PipelineTransformer.to_bronze(landing_path=landing_path, dataset=_dataset)
+    _bronze = PipelineTransformer.to_bronze(
+        landing_path=landing_path, dataset=_dataset, run_version=_run_version
+    )
     logger.info("Bronze transformation completed", extra=_bronze.to_serializable())
 
     # ==============================
@@ -146,7 +153,9 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to silver layer...")
     logger.info("=" * 80)
-    _silver = PipelineTransformer.to_silver(bronze_result=_bronze, dataset=_dataset)
+    _silver = PipelineTransformer.to_silver(
+        bronze_result=_bronze, dataset=_dataset, run_version=_run_version
+    )
 
     logger.info("Silver transformation completed !", extra=_silver.to_serializable())
 
@@ -168,7 +177,7 @@ if __name__ == "__main__":
 
     PipelineStateManager.update_success(
         dataset_name=_dataset.name,
-        version=_dataset.ingestion.version,
+        version=_run_version,
         etag=_metadata.remote_file_metadata.etag,
         last_modified=_metadata.remote_file_metadata.last_modified,
         content_length=_metadata.remote_file_metadata.content_length,

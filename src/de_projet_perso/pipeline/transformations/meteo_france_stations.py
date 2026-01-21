@@ -15,6 +15,14 @@ def transform_bronze(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
 
 
 @register_silver("meteo_france_stations")
-def transform_silver(dataset: Dataset) -> pl.DataFrame:
-    """TODO."""
-    return pl.read_parquet(dataset.get_bronze_path())
+def transform_silver(dataset: Dataset, resolver) -> pl.DataFrame:
+    """Silver transformation for Météo France stations.
+
+    Args:
+        dataset: Dataset configuration
+        resolver: PathResolver for path operations
+
+    Returns:
+        Silver layer DataFrame
+    """
+    return pl.read_parquet(resolver.bronze_latest_path())

@@ -23,13 +23,14 @@ def transform_bronze_odre(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
 
 
 @register_silver("odre_eco2mix_cons_def")
-def transform_silver_odre(dataset: Dataset) -> pl.DataFrame:
-    """Silver transformation for ODRE installations.
+def transform_silver_odre(dataset: Dataset, resolver) -> pl.DataFrame:
+    """Silver transformation for ODRE eco2mix_cons_def.
 
     Args:
-        dataset: Dataset configuration (reads from bronze)
+        dataset: Dataset configuration
+        resolver: PathResolver for path operations
 
     Returns:
         Silver layer DataFrame
     """
-    return pl.read_parquet(dataset.get_bronze_path())
+    return pl.read_parquet(resolver.bronze_latest_path())

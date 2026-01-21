@@ -31,7 +31,7 @@ Attributes:
 import logging
 import re
 import sys
-from typing import TYPE_CHECKING, Any, Pattern, Self, TypeGuard
+from typing import TYPE_CHECKING, Any, Optional, Pattern, TypeGuard
 
 from loguru import logger as _loguru_logger
 
@@ -275,10 +275,10 @@ class LoguruLogger:
                             └─ user => alice
     """
 
-    _instance: Self | None = None
+    _instance: Optional["LoguruLogger"] = None
     _logger: "Logger"
 
-    def __new__(cls, level: str) -> Self:
+    def __new__(cls, level: str) -> "LoguruLogger":
         """Return the singleton instance, creating it on first call.
 
         Args:

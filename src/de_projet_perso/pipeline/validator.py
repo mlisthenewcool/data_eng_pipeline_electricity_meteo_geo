@@ -8,6 +8,7 @@ from pathlib import Path
 
 from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
+from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.pipeline.state import PipelineStateManager
 
 
@@ -57,7 +58,8 @@ class PipelineValidator:
             ValidationResult with validation status and issues
         """
         state = PipelineStateManager.load(dataset.name)
-        expected_path = dataset.get_silver_path()
+        resolver = PathResolver(dataset.name)
+        expected_path = resolver.silver_current_path()
 
         result = ValidationResult(
             dataset=dataset.name,

@@ -14,17 +14,20 @@ Example:
 """
 
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import polars as pl
 
 from de_projet_perso.core.data_catalog import Dataset
 
+if TYPE_CHECKING:
+    from de_projet_perso.core.path_resolver import PathResolver
+
 # Bronze transforms receive the landing file path explicitly
 BronzeTransformFunc = Callable[[Dataset, Path], pl.DataFrame]
 
-# Silver transforms still use dataset (reads from bronze path)
-SilverTransformFunc = Callable[[Dataset], pl.DataFrame]
+# Silver transforms receive dataset and PathResolver
+SilverTransformFunc = Callable[[Dataset, "PathResolver"], pl.DataFrame]
 
 # Legacy type alias for backward compatibility
 TransformFunction = BronzeTransformFunc

@@ -13,8 +13,7 @@ Architecture:
         └── datasets: dict[str, Dataset]
             ├── description: str
             ├── source: Source (provider, URL, format, inner_file)
-            ├── ingestion: Ingestion (version, frequency, mode)
-            └── storage: str (path template with {layer} and {version})
+            └── ingestion: Ingestion (version, frequency, mode)
 
 Example:
     Load catalog and retrieve dataset configuration:
@@ -43,7 +42,6 @@ import yaml
 from pydantic import (
     HttpUrl,
     ValidationError,
-    field_validator,
     model_validator,
 )
 
@@ -106,7 +104,7 @@ class IngestionFrequency(StrEnum):
         WEEKLY: Data updated weekly (Airflow: @weekly)
         MONTHLY: Data updated monthly (Airflow: @monthly)
         YEARLY: Data updated yearly (Airflow: @yearly)
-        UNKNOWN: Update frequency is unknown or irregular (Airflow: None)
+        NEVER: Never automatically update (Airflow: None)
 
     Implementation Note:
         This enum uses a custom __new__ method to store both the string value
@@ -131,7 +129,7 @@ class IngestionFrequency(StrEnum):
     WEEKLY = ("weekly", "@weekly")
     MONTHLY = ("monthly", "@monthly")
     YEARLY = ("yearly", "@yearly")
-    UNKNOWN = ("unknown", None)
+    NEVER = ("never", None)
 
     def __new__(cls, value: str, airflow_schedule: str | None):
         """Create enum member with both value and Airflow schedule.
@@ -164,16 +162,55 @@ class IngestionFrequency(StrEnum):
 
         Returns:
             Airflow cron preset string (e.g., "@daily") or None if frequency
-            is unknown. This value is stored at enum member creation time.
+            is 'never'. This value is stored at enum member creation time.
 
         Example:
             >>> IngestionFrequency.DAILY.airflow_schedule
             '@daily'
-            >>> IngestionFrequency.UNKNOWN.airflow_schedule
+            >>> IngestionFrequency.NEVER.airflow_schedule
             None
         """
         # Use getattr to satisfy type checkers (attribute set dynamically in __new__)
         return getattr(self, "_airflow_schedule", None)
+
+    def get_airflow_version_template(self, no_dash: bool = False) -> str:
+        """Get Airflow template variable based on ingestion frequency.
+
+        Returns {{ ts_nodash }} for hourly datasets, {{ ds_nodash }} otherwise.
+        This is used to pass the correct template to tasks.
+
+        Args:
+            no_dash: ...
+
+        Returns:
+            Airflow template string
+
+        Example:
+            >>> dataset.get_airflow_version_template()
+            '{{ ds_nodash }}'  # For daily/weekly/monthly datasets
+        """
+        if not settings.is_running_on_airflow:
+            # TODO: custom error
+            raise Exception("Not running on Airflow, use `format_datetime_as_version` instead")
+
+        if self == IngestionFrequency.HOURLY:
+            return "{{ ts_nodash }}" if no_dash else "{{ ts }}"
+
+        return "{{ ds_nodash }}" if no_dash else "{{ ds }}"
+
+    def format_datetime_as_version(self, dt: datetime, no_dash: bool = False) -> str:
+        """Format datetime matching Airflow template format.
+
+        TODO.
+        """
+        if settings.is_running_on_airflow:
+            # TODO: custom error
+            raise Exception("Running on Airflow, use `get_airflow_version_template` instead")
+
+        if self == IngestionFrequency.HOURLY:
+            return dt.strftime("%Y%m%dT%H%M%S" if no_dash else "%Y-%m-%d-T-%H-%M-%S")
+
+        return dt.strftime("%Y-%m-%d")
 
 
 class Source(StrictModel):
@@ -296,7 +333,6 @@ class Ingestion(StrictModel):
 
     Example:
         >>> ingestion = Ingestion(
-        ...     version="2025_01_15",
         ...     frequency=IngestionFrequency.MONTHLY,
         ...     mode=IngestionMode.SNAPSHOT
         ... )
@@ -306,201 +342,37 @@ class Ingestion(StrictModel):
         with validation requiring it when mode=INCREMENTAL.
     """
 
-    version: str
     frequency: IngestionFrequency
     mode: IngestionMode
     # incremental_key: str  # TODO: Add validation -> required if mode=INCREMENTAL
 
-    @field_validator("version")
-    @classmethod
-    def validate_version_format(cls, v: str) -> str:
-        """Validate version follows YYYY_MM_DD format and is a valid date.
-
-        Args:
-            v: Version string to validate.
-
-        Returns:
-            Validated version string.
-
-        Raises:
-            ValueError: If version doesn't match YYYY_MM_DD format or
-                represents an invalid date.
-
-        Example:
-            >>> Ingestion.validate_version_format("2025_01_15")
-            '2025_01_15'
-            >>> Ingestion.validate_version_format("2025_13_01")
-            ValueError: Version '2025_13_01' has correct format but invalid date: ...
-        """
-        if not _VERSION_PATTERN.fullmatch(v):
-            raise ValueError(
-                f"Version must follow YYYY_MM_DD format (with leading zeros), got: {v}"
-            )
-
-        try:
-            datetime.strptime(v, "%Y_%m_%d")
-        except ValueError as e:
-            raise ValueError(f"Version '{v}' has correct format but invalid date: {e}") from e
-        return v
-
 
 class Dataset(StrictModel):
-    """Complete dataset configuration combining source, ingestion, and storage.
+    """Complete dataset configuration combining source and ingestion policies.
 
     This model represents a full dataset definition from the catalog,
-    including where to get the data, how often to fetch it, and where
-    to store it in the data lakehouse layers.
+    including where to get the data and how often to fetch it.
+    Path resolution is delegated to PathResolver for better separation of concerns.
 
     Attributes:
+        name: Dataset identifier (e.g., "ign_contours_iris")
         description: Human-readable dataset description
         source: Source configuration (provider, URL, format)
-        ingestion: Ingestion configuration (version, frequency, mode)
-        storage: Storage path template with {layer} and {version} placeholders
-
-    Validation Rules:
-        - storage must contain {layer} placeholder for medallion architecture
-        - storage must contain {version} placeholder for versioning
+        ingestion: Ingestion configuration (frequency, mode)
 
     Example:
         >>> dataset = Dataset(
+        ...     name="ign_contours_iris",
         ...     description="IGN administrative boundaries",
         ...     source=Source(...),
-        ...     ingestion=Ingestion(version="2025_01_15", ...),
-        ...     storage="data/{layer}/contours_iris/{version}/file.parquet"
+        ...     ingestion=Ingestion(...),
         ... )
-        >>> dataset.get_storage_path(layer="bronze")
-        Path('data/bronze/contours_iris/2025_01_15/file.parquet')
     """
 
     name: str
     description: str
     source: Source
     ingestion: Ingestion
-    storage: str
-
-    @field_validator("storage")
-    @classmethod
-    def must_contain_version_placeholder(cls, v: str) -> str:
-        """Validate storage path contains required placeholders.
-
-        Ensures the storage path template includes both {layer} and {version}
-        placeholders needed for the medallion architecture (bronze/silver/gold)
-        and version management.
-
-        Args:
-            v: Storage path template to validate.
-
-        Returns:
-            Validated storage path template.
-
-        Raises:
-            ValueError: If storage path is missing {layer} or {version} placeholder.
-
-        Example:
-            >>> Dataset.must_contain_version_placeholder(
-            ...     "data/{layer}/dataset/{version}/file.parquet"
-            ... )
-            'data/{layer}/dataset/{version}/file.parquet'
-        """
-        for placeholder in ["{layer}", "{version}"]:
-            if placeholder not in v:
-                raise ValueError(f"storage path must contain '{placeholder}' placeholder")
-        return v
-
-    def _get_storage_path(self, layer: str) -> Path:
-        """Generate storage path for a specific medallion layer.
-
-        Substitutes the {layer} and {version} placeholders in the storage
-        template with actual values.
-
-        Args:
-            layer: Medallion architecture layer (e.g., "landing", "bronze", "silver")
-
-        Returns:
-            Resolved storage path with placeholders substituted.
-
-        Raises:
-            ValueError: If layer is not one of the valid medallion layers.
-
-        Example:
-            >>> dataset.storage = "{layer}/ign/contours_iris_{version}.parquet" # noqa
-            >>> dataset.ingestion.version = "2025_01_15" # noqa
-            >>> dataset.get_storage_path("bronze") # noqa
-            Path('data/bronze/ign/contours_iris_2025_01_15.parquet')
-
-            >>> dataset.get_storage_path("invalid_layer") # noqa
-            ValueError: Invalid layer 'invalid_layer'. Must be one of: bronze, gold, landing, silver
-        """
-        if layer not in VALID_LAYERS:
-            raise ValueError(
-                f"Invalid layer '{layer}'. Must be one of: {', '.join(sorted(VALID_LAYERS))}"
-            )
-        return settings.data_dir_path / self.storage.format(
-            layer=layer, version=self.ingestion.version
-        )
-
-    def get_landing_dir(self) -> Path:
-        """Get landing directory for this dataset.
-
-        The landing layer preserves original filenames from the source.
-        This method returns the directory where raw files are stored,
-        not a specific file path.
-
-        Returns:
-            Directory path for landing files (e.g., data/landing/ign/)
-
-        Example:
-            >>> dataset.get_landing_dir()
-            Path('data/landing/ign')
-
-        Note:
-            Files in this directory preserve their original names from the source:
-            - Archives: Original archive filename from server
-            - Extracted files: Original inner_file name from archive
-            - Direct downloads: Filename from Content-Disposition or URL
-        """
-        return settings.data_dir_path / "landing" / self.source.provider
-
-    def get_landing_path(self) -> Path:
-        """Get landing file path with standardized naming (DEPRECATED).
-
-        DEPRECATED: This method applies standardized naming too early in the pipeline.
-        New code should use get_landing_dir() to get the directory and preserve
-        original filenames. This method is kept for backward compatibility with
-        existing transformations.
-
-        Returns:
-            Path with standardized filename (old behavior)
-        """
-        if self.source.inner_file:
-            inner_file_file_extension = Path(self.source.inner_file).suffix
-            return self._get_storage_path(layer="landing").with_suffix(inner_file_file_extension)
-
-        return self._get_storage_path(layer="landing")
-
-    def get_bronze_path(self) -> Path:
-        """Get bronze file path with standardized naming.
-
-        The bronze layer applies the standardized naming convention defined
-        in the catalog's storage template. This is where filenames are
-        normalized according to the project's naming standards.
-
-        Returns:
-            Path to bronze file with standardized name
-
-        Example:
-            >>> dataset.get_bronze_path()
-            Path('data/bronze/ign/contours_iris_2025_01_01.parquet')
-        """
-        return self._get_storage_path(layer="bronze")
-
-    def get_silver_path(self) -> Path:
-        """Get silver file path with standardized naming.
-
-        Returns:
-            Path to silver file with standardized name
-        """
-        return self._get_storage_path(layer="silver")
 
 
 def format_pydantic_errors(pydantic_errors: ValidationError) -> dict[str, str]:
@@ -654,8 +526,7 @@ if __name__ == "__main__":
             extra={
                 "name": _dataset.name,
                 "provider": _dataset.source.provider,
-                "version": _dataset.ingestion.version,
                 "format": _dataset.source.format.value,
-                "storage (landing)": _dataset.get_landing_dir(),
+                "testsomething": {"inside": {}},
             },
         )

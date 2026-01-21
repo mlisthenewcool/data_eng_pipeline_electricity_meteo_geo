@@ -53,10 +53,10 @@ FROM ST_read(?, layer = 'contours_iris')
 
 
 @register_silver("ign_contours_iris")
-def transform_silver(dataset: Dataset) -> pl.DataFrame:
+def transform_silver(dataset: Dataset, resolver) -> pl.DataFrame:
     """Silver transformation for IGN Contours IRIS.
 
-    Reads from standardized bronze Parquet and applies business transformations.
+    Reads from latest bronze Parquet and applies business transformations.
     For now, pass-through transformation (no additional business logic).
 
     Future enhancements could include:
@@ -66,15 +66,16 @@ def transform_silver(dataset: Dataset) -> pl.DataFrame:
     - Quality metrics
 
     Args:
-        dataset: Dataset configuration (reads from bronze using get_bronze_path())
+        dataset: Dataset configuration
+        resolver: PathResolver instance for path operations
 
     Returns:
         Silver layer DataFrame
     """
-    # Read from standardized bronze layer file
-    bronze_path = dataset.get_bronze_path()
-    logger.info("Reading from bronze", extra={"bronze_path": str(bronze_path)})
-    df = pl.read_parquet(bronze_path)
+    # Read from latest bronze (via symlink)
+    bronze_latest = resolver.bronze_latest_path()
+    logger.info("Reading from bronze latest", extra={"bronze_path": str(bronze_latest)})
+    df = pl.read_parquet(bronze_latest)
 
     # For now, pass-through (no transformation needed)
     return df
