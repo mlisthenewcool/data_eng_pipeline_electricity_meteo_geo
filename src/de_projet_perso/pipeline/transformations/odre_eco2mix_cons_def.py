@@ -1,4 +1,4 @@
-"""Transformations for ODRE installations dataset."""
+"""Transformations for ODRE eco2mix_cons_def dataset."""
 
 from pathlib import Path
 
@@ -8,9 +8,9 @@ from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.pipeline.transformations import register_bronze, register_silver
 
 
-@register_bronze("odre_installations")
+@register_bronze("odre_eco2mix_cons_def")
 def transform_bronze_odre(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
-    """Bronze transformation for ODRE installations.
+    """Bronze transformation for ODRE eco2mix_cons_def.
 
     Args:
         dataset: Dataset configuration from catalog
@@ -22,9 +22,9 @@ def transform_bronze_odre(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
     return pl.read_parquet(landing_path)
 
 
-@register_silver("odre_installations")
+@register_silver("odre_eco2mix_cons_def")
 def transform_silver_odre(dataset: Dataset, resolver) -> pl.DataFrame:
-    """Silver transformation for ODRE installations.
+    """Silver transformation for ODRE eco2mix_cons_def.
 
     Args:
         dataset: Dataset configuration

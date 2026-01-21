@@ -29,36 +29,20 @@ Attributes:
 """
 
 import logging
-import os
 import re
 import sys
-from functools import cache
-from typing import TYPE_CHECKING, Any, Pattern, Self, TypeGuard
+from typing import TYPE_CHECKING, Any, Optional, Pattern, TypeGuard
 
 from loguru import logger as _loguru_logger
 
+from de_projet_perso.core.settings import settings
+
 if TYPE_CHECKING:
-    from loguru import Message, Record
+    from loguru import Logger, Message, Record
 
 
-# TODO: Move to settings. LOG_LEVEL should be defined via Docker for consistency.
-# TODO: Consider moving AIRFLOW_LOGGER_NAME to settings as well.
-_AIRFLOW_LOGGER_NAME = "MY_LOGGER"
-_LOG_LEVEL = "INFO"
-
-
-@cache
-def _is_airflow_context() -> bool:
-    """Detect if running inside an Airflow environment.
-
-    Checks for the presence of ``airflow.cfg`` in the Airflow home directory.
-    Result is cached for performance since environment doesn't change at runtime.
-
-    Returns:
-        True if running inside Airflow, False otherwise.
-    """
-    airflow_home = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
-    return os.path.exists(os.path.join(airflow_home, "airflow.cfg"))
+# convenient, shorter reference
+_ON_AIRFLOW = settings.is_running_on_airflow
 
 
 def _should_use_colors() -> bool:
@@ -71,7 +55,7 @@ def _should_use_colors() -> bool:
     Returns:
         True if the environment supports and expects colored output, False otherwise.
     """
-    if _is_airflow_context():
+    if _ON_AIRFLOW:
         return False
     return sys.stderr.isatty()
 
@@ -79,12 +63,24 @@ def _should_use_colors() -> bool:
 _USE_COLORS = _should_use_colors()
 
 # ANSI escape codes for terminal coloring (both \x1b and \033 are equivalent)
-_FAINT = "\033[2m" if _USE_COLORS else ""
-_LIGHT_PURPLE = "\033[1;35m" if _USE_COLORS else ""
-_LIGHT_WHITE = "\033[1;37m" if _USE_COLORS else ""
-_RESET = "\033[0m" if _USE_COLORS else ""
+if _USE_COLORS:
+    _FAINT = "\033[2m"
+    _LIGHT_PURPLE = "\033[1;35m"
+    _LIGHT_WHITE = "\033[1;37m"
+    _RESET = "\033[0m"
+else:
+    _FAINT = ""
+    _LIGHT_PURPLE = ""
+    _LIGHT_WHITE = ""
+    _RESET = ""
 
 _ANSI_PATTERN: Pattern[str] = re.compile(r"\033\[[0-9;]*m")
+
+# Indentation constants
+_INDENT = 22 if _ON_AIRFLOW else 20
+_INDENT_INCREASE_PER_LEVEL = 4
+
+_SEPARATOR = " => "
 
 # Log formats: Airflow format is simplified since it already shows time & context
 _FORMAT_TERMINAL = (
@@ -94,8 +90,18 @@ _FORMAT_AIRFLOW = "{message}{extra_str}"
 
 
 def _is_mutable_record(record: "Record") -> TypeGuard[dict[str, Any]]:
-    """Check if the object is a mutable dictionary (TypeGuard)."""
-    return isinstance(record, dict) or hasattr(record, "__setitem__")
+    """Type guard ensuring record is a mutable dict (always true for Loguru records).
+
+    Loguru always passes dict instances to patcher functions, but this guard
+    helps type checkers understand that record supports item assignment.
+
+    Args:
+        record: Loguru record object (always a dict in practice).
+
+    Returns:
+        True if record supports dict operations (always True for valid records).
+    """
+    return isinstance(record, dict)  # or hasattr(record, "__setitem__")
 
 
 def _strip_ansi(text: str) -> str:
@@ -131,6 +137,75 @@ def _safe_str(value: Any) -> str:
         return "<REPR_ERROR>"
 
 
+def _compute_prefix(level: int) -> str:
+    """Compute the prefix string for structured log output at a given nesting level.
+
+    Args:
+        level: Current nesting depth (0 for top-level extra fields).
+
+    Returns:
+        Formatted prefix string with appropriate indentation and tree character.
+    """
+    current_indent = " " * (_INDENT + (level * _INDENT_INCREASE_PER_LEVEL))
+    if _ON_AIRFLOW:
+        return f"\n{current_indent}└─ "
+    else:
+        return f"\n{current_indent}{_FAINT}└─ {_RESET}"
+
+
+def _format_value_recursive(value: Any, level: int) -> str:
+    r"""Format a value recursively for structured log output.
+
+    Handles nested dictionaries by recursively formatting them with proper indentation.
+    Non-dict values are converted to sanitized strings. Empty dicts are represented
+    as "{}".
+
+    Args:
+        value: The value to format (dict, list, primitive, or any object).
+        level: Current nesting depth for indentation (0 = top-level).
+
+    Returns:
+        Formatted string with proper indentation, colors (if enabled), and
+        tree-style structure for nested dicts.
+
+    Example:
+        >>> _format_value_recursive({"a": {"b": 1}}, level=0, is_airflow=True)
+        ... 'a => \\n'
+        ... '   └─ b => 1'
+    """
+    # Terminal case: non-dict values are converted to safe strings
+    if not isinstance(value, dict):
+        return _safe_str(value)
+
+    # Empty dict representation
+    if not value:
+        return "{?}"
+
+    line_prefix = _compute_prefix(level=level)
+
+    parts = []
+    for k, v in value.items():
+        k_str = _safe_str(k)
+        # Apply color to keys only in terminal mode
+        if not _ON_AIRFLOW:
+            k_str = f"{_LIGHT_PURPLE}{k_str}{_RESET}"
+        if isinstance(v, dict) and v:
+            # Nested dict: recursively format with increased indentation
+            v_formatted = _format_value_recursive(v, level + 1)
+            parts.append(f"{k_str}{v_formatted}")
+        else:
+            # Simple value: format as key => value
+            v_str = _safe_str(v)
+            if not _ON_AIRFLOW:
+                v_str = f"{_LIGHT_WHITE}{v_str}{_RESET}"
+            parts.append(f"{k_str}{_SEPARATOR}{v_str}")
+    result = line_prefix.join(parts)
+    # Add leading prefix for nested levels
+    if level > 0:
+        return line_prefix + result
+    return result
+
+
 def _format_extra(record: "Record") -> None:
     """Format extra fields and inject them into the log record.
 
@@ -140,10 +215,13 @@ def _format_extra(record: "Record") -> None:
     - Terminal: Colored key-value pairs on separate lines with tree-style indent
     - Airflow: Plain text key-value pairs for clean UI display
 
+    Nested dictionaries in extra fields are recursively formatted with increased
+    indentation to maintain visual hierarchy.
+
     Args:
         record: Loguru record dict to modify in-place.
     """
-    extra: dict[str, Any] = record.get("extra", {})
+    extra = record.get("extra", {})
 
     if not _is_mutable_record(record):
         return
@@ -152,20 +230,10 @@ def _format_extra(record: "Record") -> None:
         record["extra_str"] = ""
         return
 
-    # indent sizes are based on both Airflow UI prefix & standard terminal format
-    if _is_airflow_context():
-        indent = " " * 22
-        prefix = f"\n{indent}└─ "
-        parts: list[str] = [f"{_safe_str(k)} => {_safe_str(v)}" for k, v in extra.items()]
-    else:
-        indent = " " * 20
-        prefix = f"\n{indent}{_FAINT}└─ {_RESET}"
-        parts: list[str] = [
-            f"{_LIGHT_PURPLE}{_safe_str(k)}{_RESET} => {_LIGHT_WHITE}{_safe_str(v)}{_RESET}"
-            for k, v in extra.items()
-        ]
+    prefix = _compute_prefix(level=0)
+    formatted_extra = _format_value_recursive(extra, level=0)
 
-    record["extra_str"] = prefix + prefix.join(parts)
+    record["extra_str"] = f"{prefix}{formatted_extra}"
 
 
 def _airflow_sink(message: "Message") -> None:
@@ -180,24 +248,7 @@ def _airflow_sink(message: "Message") -> None:
     record = message.record
     level_name = record["level"].name
     level_no = logging.getLevelName(level=level_name)
-    logging.getLogger(name=_AIRFLOW_LOGGER_NAME).log(level=level_no, msg=message.strip())
-
-    # # 2. Capture des extras pour XCom (Nouveauté)
-    # # On ne pousse en XCom que si on est dans Airflow et que c'est une INFO/ERROR avec extras
-    # extra = record.get("extra", {})
-    # if _is_airflow_context() and extra:
-    #     try:
-    #         from airflow.operators.python import get_current_context
-    #         context = get_current_context()
-    #         ti = context["ti"]
-    #
-    #         # On pousse chaque clé de l'extra dans XCom avec un préfixe
-    #         for key, value in extra.items():
-    #             ti.xcom_push(key=f"log_metric_{key}", value=value)
-    #     except (ImportError, RuntimeError):
-    #         # On n'est pas dans un contexte de tâche Airflow (ex: parsing)
-    #         # ou Airflow n'est pas installé. On ignore silencieusement.
-    #         pass
+    logging.getLogger(name=settings.airflow_logger_name).log(level=level_no, msg=message.strip())
 
 
 class LoguruLogger:
@@ -224,9 +275,10 @@ class LoguruLogger:
                             └─ user => alice
     """
 
-    _instance: Self | None = None
+    _instance: Optional["LoguruLogger"] = None
+    _logger: "Logger"
 
-    def __new__(cls, level: str) -> Self:
+    def __new__(cls, level: str) -> "LoguruLogger":
         """Return the singleton instance, creating it on first call.
 
         Args:
@@ -252,7 +304,7 @@ class LoguruLogger:
         _loguru_logger.remove()
         patched = _loguru_logger.patch(_format_extra)
 
-        if _is_airflow_context():
+        if _ON_AIRFLOW:
             patched.add(
                 _airflow_sink,
                 level=level,
@@ -341,7 +393,7 @@ class LoguruLogger:
         an active exception, logs a warning instead of a traceback.
 
         Args:
-            message (str): The log message.
+            message: The log message.
             **kwargs: Optional keyword arguments. Supports ``extra`` dict for structured context.
 
         Example:
@@ -352,7 +404,7 @@ class LoguruLogger:
         """
         if sys.exc_info()[0] is None:
             extra: dict[str, Any] = kwargs.setdefault("extra", {})
-            extra["warning"] = "You called logger.exception() with no active exception."
+            extra["warning"] = "You called logger.exception() with no active exception"
             kwargs["exc_info"] = False
         else:
             kwargs["exc_info"] = True
@@ -368,10 +420,10 @@ class LoguruLogger:
         cls._instance = None
 
 
-logger = LoguruLogger(level=_LOG_LEVEL)
+logger = LoguruLogger(level=settings.logging_level)
 
 
-def _test_logs_visually() -> None:  # pragma: no cover
+def __test_logs_visually() -> None:  # pragma: no cover
     """Visual test for logger output across all levels and edge cases.
 
     Run with: ``PYTHONPATH=src uv run python -m de_projet_perso.core.logger``
@@ -400,4 +452,4 @@ def _test_logs_visually() -> None:  # pragma: no cover
 
 
 if __name__ == "__main__":
-    _test_logs_visually()
+    __test_logs_visually()

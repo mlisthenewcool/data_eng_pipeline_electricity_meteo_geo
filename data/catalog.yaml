@@ -1,0 +1,83 @@
+# à ajouter ?
+#quality: "..."
+#schema: "..."
+#tags: "..."
+#owner: "..."
+#source:
+#  license: "..."
+#  documentation_url: "..."
+#ingestion:
+#  retention_days: "..."
+#  retention_versions: ".."
+#  filters:
+#    # "&refine.nature=Données+consolidées"
+#    lang: "fr"
+#    timezone: "Europe/Paris"
+#    refine.nature: "Données consolidées"
+
+
+#datasets:
+#  ign_contours_iris:
+#    description: "..."
+#    source:
+#      provider: "IGN"
+#      url: "..."
+#      format: "7z"
+#      inner_file: "iris.gpkg"
+#    ingestion:
+#      frequency: "daily"
+#      mode: "snapshot"
+
+
+
+datasets:
+  ign_contours_iris:
+    description: "La base de données de référence pour la diffusion infra-communale des résultats du recensement de la population par Iris, de précision décamétrique"
+    source:
+      provider: "IGN"
+      url: "https://data.geopf.fr/telechargement/download/CONTOURS-IRIS/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2025-01-01/CONTOURS-IRIS_3-0__GPKG_LAMB93_FXX_2025-01-01.7z"
+      format: "7z"
+      inner_file: "iris.gpkg"
+    ingestion:
+      frequency: "daily"
+      mode: "snapshot"
+
+  odre_installations:
+    description: "Registre national des installations de production et stockage d'électricité"
+    source:
+      provider: "ODRE"
+      url: "https://object.files.data.gouv.fr/hydra-parquet/hydra-parquet/c14e5a7d-2ca6-4ad8-bc61-93889d13fc25.parquet"
+      format: "parquet"
+    ingestion:
+      frequency: "daily"
+      mode: "snapshot"
+
+  odre_eco2mix_cons_def:
+    description: "Production électrique régionale eco2mix (consolidées et définitives)"
+    source:
+      provider: "ODRE"
+      url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-regional-cons-def/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
+      format: "parquet"
+    ingestion:
+      frequency: "daily"
+      mode: "snapshot"
+
+  odre_eco2mix_tr:
+    description: "Production électrique régionale eco2mix (temps réel)"
+    source:
+      provider: "ODRE"
+      url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-regional-tr/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
+      format: "parquet"
+    ingestion:
+      frequency: "daily"
+      mode: "snapshot"
+
+  meteo_france_stations:
+    description: "Liste et localisation des stations météorologiques Météo France"
+    source:
+      provider: "MétéoFrance"
+      url: "https://www.data.gouv.fr/api/1/datasets/r/1fe544d8-4615-4642-a307-5956a7d90922"
+      format: "json"
+    ingestion:
+      frequency: "daily"
+      mode: "snapshot"

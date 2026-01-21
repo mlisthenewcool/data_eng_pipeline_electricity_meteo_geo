@@ -4,22 +4,22 @@ This module handles bronze and silver layer transformations,
 completely decoupled from Airflow orchestration.
 
 Transformations:
-- Bronze: Raw → Parquet with normalized columns
-- Silver: Bronze → Business logic applied (custom transformations)
+- Bronze: Landing → Parquet with normalized columns (versioned by run date)
+- Silver: Bronze latest → Business logic applied → current.parquet + backup.parquet
 
-SHA256 Propagation:
-- Landing SHA256 is propagated through all layers for traceability
-- Archive SHA256 is also propagated to track original source
+Path Resolution:
+- Uses PathResolver for all path operations
+- Bronze: Creates versioned files ({date}.parquet) + updates latest.parquet symlink
+- Silver: Rotates current → backup before writing new current
 """
 
+import shutil
 from pathlib import Path
 
-import duckdb
-import polars as pl
-
+from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.datacatalog import Dataset
-from de_projet_perso.pipeline.results import BronzeResult, LandingResult, SilverResult
+from de_projet_perso.core.path_resolver import PathResolver
+from de_projet_perso.pipeline.results import BronzeResult, SilverResult
 from de_projet_perso.pipeline.transformations import get_bronze_transform, get_silver_transform
 
 
@@ -27,162 +27,132 @@ class PipelineTransformer:
     """Transformation logic for bronze and silver layers."""
 
     @staticmethod
-    def to_bronze(
-        landing_result: LandingResult,
-        dataset_name: str,
-        dataset: Dataset,
-        bronze_dir: Path,
-    ) -> BronzeResult:
+    def to_bronze(landing_path: Path, dataset: Dataset, run_version: str) -> BronzeResult:
         """Convert landing file to Parquet with normalized column names.
 
         Bronze layer transformations:
-        1. Read raw file (GeoPackage, Parquet, JSON, etc.)
-        2. Normalize column names to snake_case
-        3. Apply custom transformations if registered
-        4. Write to versioned Parquet file
+        1. Read raw file from landing
+        2. Apply custom transformations (normalize columns, filter, etc.)
+        3. Write to versioned bronze Parquet file
+        4. Update latest.parquet symlink
+        5. Delete landing file
 
         Args:
-            landing_result: Result from landing validation (contains file path and SHA256s)
-            dataset_name: Dataset identifier
+            landing_path: Path to landing file (with original filename)
             dataset: Dataset configuration
-            bronze_dir: Bronze layer directory
+            run_version: Version for this run (e.g., "2025-01-21" or "20250121T143022")
 
         Returns:
-            BronzeResult with bronze file info and propagated SHA256s
+            BronzeResult with row count and columns
 
         Raises:
-            ValueError: If source format is unsupported
+            NotImplementedError: If no bronze transformation is registered
         """
-        bronze_dir.mkdir(parents=True, exist_ok=True)
-        bronze_path = bronze_dir / f"{dataset.ingestion.version}.parquet"
+        resolver = PathResolver(dataset_name=dataset.name, run_version=run_version)
 
-        source_path = landing_result.path
+        bronze_path = resolver.bronze_path()
+        bronze_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            f"Converting to bronze for {dataset_name}",
-            extra={"source": source_path.name, "dest": bronze_path.name},
+            f"Converting to bronze for {dataset.name}",
+            extra={
+                "landing_path": str(landing_path),
+                "bronze_path": str(bronze_path),
+                "run_version": run_version,
+            },
         )
 
-        # Read based on format
-        if source_path.suffix == ".gpkg":
-            # GeoPackage needs special handling with DuckDB
-
-            conn = duckdb.connect()
-            conn.execute("INSTALL spatial; LOAD spatial;")
-            # ST_AsGeoJSON(geometrie) AS geom_json
-            # noinspection SqlResolve
-            query = """
-                SELECT
-                    * EXCLUDE (geometrie),
-                    ST_AsWKB(geometrie) AS geom_wkb
-                FROM st_read(?, layer = 'contours_iris')
-            """
-            logger.info("duckdb spatial query started")
-            df = conn.execute(query, parameters=[str(source_path)]).pl()
-            logger.info("duckdb spatial query ended")
-        elif source_path.suffix == ".parquet":
-            df = pl.read_parquet(source_path)
-        elif source_path.suffix == ".json":
-            df = pl.read_json(source_path)
-        else:
-            raise ValueError(f"Unsupported format: {source_path.suffix}")
-
-        # Normalize column names to snake_case (always applied)
-        df = df.rename(lambda col: col.lower().replace(" ", "_").replace("-", "_"))
-
-        # Apply dataset-specific bronze transformation if registered
-        custom_transform = get_bronze_transform(dataset_name)
-        if custom_transform:
-            logger.info(
-                f"Applying custom bronze transformation for {dataset_name}",
-                extra={"dataset": dataset_name},
-            )
-            df = custom_transform(df, dataset_name)
-        else:
-            logger.debug(
-                f"No custom bronze transformation for {dataset_name}",
-                extra={"dataset": dataset_name},
+        # Apply dataset-specific bronze transformation
+        transforms = get_bronze_transform(dataset.name)
+        if transforms is None:
+            raise NotImplementedError(
+                f"No bronze transformation registered for dataset: {dataset.name}"
             )
 
-        # Write to Parquet
+        # Pass both dataset config and actual landing file path
+        df = transforms(dataset, landing_path)
         df.write_parquet(bronze_path)
+
+        # Update latest symlink to point to this version
+        resolver.update_bronze_latest_link()
 
         columns = df.columns
         row_count = len(df)
 
         logger.info(
-            f"Bronze conversion complete for {dataset_name}",
-            extra={"rows": row_count, "columns": len(columns)},
+            f"Bronze conversion complete for {dataset.name}",
+            extra={
+                "rows": row_count,
+                "columns": len(columns),
+                "bronze_path": str(bronze_path),
+                "latest_link": str(resolver.bronze_latest_path()),
+            },
         )
 
-        return BronzeResult(
-            path=bronze_path,
-            row_count=row_count,
-            columns=columns,
-            sha256=landing_result.sha256,  # Propagate landing file SHA256
-            archive_sha256=landing_result.archive_sha256,  # Propagate archive SHA256
-        )
+        # Cleanup all landing files (inside the landing directories)
+        landing_dir = resolver.landing_dir()
+        if landing_dir.exists() and landing_dir.is_dir():
+            shutil.rmtree(landing_dir)
+
+        return BronzeResult(row_count=row_count, columns=columns)
 
     @staticmethod
-    def to_silver(
-        bronze_result: BronzeResult,
-        dataset_name: str,
-        dataset: Dataset,
-        silver_dir: Path,
-    ) -> SilverResult:
+    def to_silver(bronze_result: BronzeResult, dataset: Dataset, run_version: str) -> SilverResult:
         """Apply business transformations to create silver layer.
 
         Silver layer transformations:
-        1. Read bronze Parquet file
-        2. Apply custom business logic (if registered)
-        3. Write to versioned silver Parquet file
+        1. Rotate silver files (current → backup)
+        2. Read from bronze latest.parquet
+        3. Apply custom business logic
+        4. Write to silver current.parquet
 
         Args:
-            bronze_result: Result from bronze transformation (contains file path and SHA256s)
-            dataset_name: Dataset identifier
+            bronze_result: Result from bronze transformation (for context)
             dataset: Dataset configuration
-            silver_dir: Silver layer directory
+            run_version: Version for this run
 
         Returns:
-            SilverResult with silver file info and propagated SHA256s
+            SilverResult with row count and columns
         """
-        silver_dir.mkdir(parents=True, exist_ok=True)
-        silver_path = silver_dir / f"{dataset.ingestion.version}.parquet"
+        resolver = PathResolver(dataset_name=dataset.name, run_version=run_version)
 
-        bronze_path = bronze_result.path
+        # Rotate silver: current → backup
+        resolver.rotate_silver()
 
-        logger.info(
-            f"Transforming to silver for {dataset_name}",
-            extra={"source": bronze_path.name},
-        )
-
-        df = pl.read_parquet(bronze_path)
-
-        custom_transform = get_silver_transform(dataset_name)
-        if custom_transform:
-            logger.info(
-                f"Applying custom silver transformation for {dataset_name}",
-                extra={"dataset": dataset_name},
-            )
-            df = custom_transform(df, dataset_name)
-        else:
-            logger.debug(
-                f"No custom silver transformation for {dataset_name}, using default (no-op)",
-                extra={"dataset": dataset_name},
-            )
-            # Default: no transformation, just pass through
-
-        df.write_parquet(silver_path)
+        silver_current = resolver.silver_current_path()
+        silver_current.parent.mkdir(parents=True, exist_ok=True)
+        bronze_latest = resolver.bronze_latest_path()
 
         logger.info(
-            f"Silver transformation complete for {dataset_name}",
-            extra={"path": str(silver_path), "rows": len(df)},
+            f"Transforming to silver for {dataset.name}",
+            extra={
+                "bronze_source": str(bronze_latest),
+                "silver_dest": str(silver_current),
+            },
         )
 
-        return SilverResult(
-            path=silver_path,
-            row_count=len(df),
-            columns=df.columns,
-            sha256=bronze_result.sha256,  # Propagate from bronze (= landing SHA256)
-            archive_sha256=bronze_result.archive_sha256,  # Propagate archive SHA256
+        # Apply dataset-specific silver transformation
+        transforms = get_silver_transform(dataset.name)
+        if transforms is None:
+            raise NotImplementedError(
+                f"No silver transformation registered for dataset: {dataset.name}"
+            )
+
+        # Transformations now read from resolver.bronze_latest_path()
+        df = transforms(dataset, resolver)
+        df.write_parquet(silver_current)
+
+        columns = df.columns
+        row_count = len(df)
+
+        logger.info(
+            f"Silver transformation complete for {dataset.name}",
+            extra={
+                "rows": row_count,
+                "columns": len(columns),
+                "silver_current": str(silver_current),
+                "silver_backup": str(resolver.silver_backup_path()),
+            },
         )
+
+        return SilverResult(row_count=row_count, columns=df.columns)

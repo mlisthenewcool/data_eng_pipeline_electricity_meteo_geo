@@ -99,21 +99,21 @@ class FileNotFoundInArchiveError(ExtractionError):
         super().__init__(f"File {target_filename} not found in archive: {archive_path.name}")
 
 
-class FileShouldNotExist(Exception):
-    """Raised when a file exists but the operation requires it to be absent.
-
-    Attributes:
-        path: Path to the file that already exists.
-    """
-
-    def __init__(self, path: Path) -> None:
-        """Initializes the error with the conflicting file path.
-
-        Args:
-            path: Path to the file that already exists.
-        """
-        self.path = path
-        super().__init__(f"File {self.path} already exists but shouldn't.")
+# class FileShouldNotExist(Exception):
+#     """Raised when a file exists but the operation requires it to be absent.
+#
+#     Attributes:
+#         path: Path to the file that already exists.
+#     """
+#
+#     def __init__(self, path: Path) -> None:
+#         """Initializes the error with the conflicting file path.
+#
+#         Args:
+#             path: Path to the file that already exists.
+#         """
+#         self.path = path
+#         super().__init__(f"File {self.path} already exists but shouldn't.")
 
 
 class FileIntegrityError(Exception):

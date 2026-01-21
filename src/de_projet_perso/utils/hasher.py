@@ -7,7 +7,6 @@ with configurable chunk sizes for memory efficiency.
 import hashlib
 from pathlib import Path
 
-from de_projet_perso.core.exceptions import FileIntegrityError
 from de_projet_perso.core.settings import settings
 
 
@@ -46,14 +45,14 @@ class FileHasher:
                 instance.update(chunk)
         return instance.hexdigest
 
-    @classmethod
-    def verify(
-        cls, path: Path, expected_hash: str, algorithm: str = settings.hash_algorithm
-    ) -> None:
-        """Verify file integrity. Raises FileIntegrityError if hashes don't match."""
-        actual = cls.hash_file(path, algorithm)
-        if actual.lower() != expected_hash.lower():
-            raise FileIntegrityError(
-                path=path,
-                reason=f"Hash mismatch ({algorithm}). Expected: {expected_hash}, Got: {actual}",
-            )
+    # @classmethod
+    # def verify(
+    #     cls, path: Path, expected_hash: str, algorithm: str = settings.hash_algorithm
+    # ) -> None:
+    #     """Verify file integrity. Raises FileIntegrityError if hashes don't match."""
+    #     actual = cls.hash_file(path, algorithm)
+    #     if actual.lower() != expected_hash.lower():
+    #         raise FileIntegrityError(
+    #             path=path,
+    #             reason=f"Hash mismatch ({algorithm}). Expected: {expected_hash}, Got: {actual}",
+    #         )

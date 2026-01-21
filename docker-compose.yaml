@@ -47,12 +47,14 @@ services:
       postgres_service:
         condition: service_healthy
     environment:
+      # reference : https://airflow.apache.org/docs/docker-stack/build-arg-ref.html
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: >
         bash -c 'printf "postgresql+psycopg://%s:%s@postgres_service/airflow" "$$(cat /run/secrets/postgres_root_username)" "$$(cat /run/secrets/postgres_root_password)"'
       AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Paris
       PYTHONPATH: /opt/airflow/src # required to let Airflow reach code written in src/
       AIRFLOW__CORE__LOAD_EXAMPLES: False
+      # AIRFLOW__LOGGING__EXTRA_LOGGER_NAMES
       AIRFLOW__LOGGING__LOGGING_LEVEL: "INFO" # TODO: consistency with custom logging
       AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 5 # by default
       # AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/de_projet_perso/airflow/dags # TODO: prod ?

@@ -6,8 +6,9 @@ This module validates that pipeline state files are coherent with reality on dis
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
-from de_projet_perso.datacatalog import Dataset
+from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.pipeline.state import PipelineStateManager
 
 
@@ -38,11 +39,7 @@ class PipelineValidator:
     """Validation logic for pipeline state coherence."""
 
     @staticmethod
-    def validate_state_coherence(
-        dataset_name: str,
-        dataset: Dataset,
-        data_dir: Path,
-    ) -> ValidationResult:
+    def validate_state_coherence(dataset: Dataset) -> ValidationResult:
         """Verify state file matches reality on disk.
 
         This validation ensures that the state recorded in JSON
@@ -55,18 +52,17 @@ class PipelineValidator:
         - State file itself exists
 
         Args:
-            dataset_name: Dataset identifier
             dataset: Dataset configuration
-            data_dir: Root data directory
 
         Returns:
             ValidationResult with validation status and issues
         """
-        state = PipelineStateManager.load(dataset_name)
-        expected_path = data_dir / dataset.get_storage_path("silver")
+        state = PipelineStateManager.load(dataset.name)
+        resolver = PathResolver(dataset.name)
+        expected_path = resolver.silver_current_path()
 
         result = ValidationResult(
-            dataset=dataset_name,
+            dataset=dataset.name,
             expected_path=expected_path,
             expected_exists=expected_path.exists(),
             state_file_exists=state is not None,
@@ -78,24 +74,6 @@ class PipelineValidator:
         if not expected_path.exists():
             result.issues.append(f"Expected file missing: {expected_path}")
             result.coherent = False
-
-        # Check state coherence
-        if state and state.last_successful_run:
-            silver_stage = state.last_successful_run.stages.get("silver")
-            if silver_stage and silver_stage.path:
-                recorded_path = Path(silver_stage.path)
-                if recorded_path != expected_path:
-                    result.issues.append(
-                        f"Path mismatch - recorded: {recorded_path}, expected: {expected_path}"
-                    )
-                    result.coherent = False
-                    logger.warning(
-                        "State file path mismatch",
-                        extra={
-                            "recorded": str(recorded_path),
-                            "expected": str(expected_path),
-                        },
-                    )
 
         if result.coherent:
             logger.info("State validation passed", extra=result.to_dict())
