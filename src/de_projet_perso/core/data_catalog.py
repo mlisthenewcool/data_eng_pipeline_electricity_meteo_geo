@@ -2,8 +2,8 @@
 
 This module provides a declarative, YAML-based catalog system for defining:
 - Where to fetch data (source URLs, formats, providers)
-- When to fetch data (ingestion frequency, versioning)
-- Where to store data (storage paths with templating)
+- When to fetch data (ingestion frequency, mode)
+- How data is versioned (frequency-based: daily, hourly, etc.)
 
 The catalog is validated using Pydantic models, ensuring type safety and catching
 configuration errors at load time rather than runtime.
@@ -11,28 +11,43 @@ configuration errors at load time rather than runtime.
 Architecture:
     DataCatalog
         └── datasets: dict[str, Dataset]
+            ├── name: str (auto-injected from YAML key)
             ├── description: str
             ├── source: Source (provider, URL, format, inner_file)
-            └── ingestion: Ingestion (version, frequency, mode)
+            └── ingestion: Ingestion (frequency, mode)
 
 Example:
     Load catalog and retrieve dataset configuration:
 
     >>> from pathlib import Path
-    >>> catalog = DataCatalog.load(Path("data/data_catalog.yaml"))
-    >>> dataset = catalog.get_dataset("ign_contours_iris")
-    >>> bronze_path = dataset.get_storage_path(layer="bronze")
-    >>> print(bronze_path)
-    data/bronze/ign_contours_iris/2025_01_15/file.parquet
+    ... from de_projet_perso.core.data_catalog import DataCatalog # noqa
+    ... from de_projet_perso.core.path_resolver import PathResolver # noqa
+    ... from datetime import datetime
+
+    >>> catalog = DataCatalog.load(Path("data/catalog.yaml"))
+    ... dataset = catalog.get_dataset("ign_contours_iris")
+
+    >>> # Generate version from frequency
+    ... run_version = dataset.ingestion.frequency.format_datetime_as_version(
+    ...     datetime.now(), no_dash=True
+    ... )
+
+    >>> # Use PathResolver for path construction
+    ... resolver = PathResolver(dataset_name=dataset.name, run_version=run_version)
+    ... bronze_path = resolver.bronze_path()
+    ... print(bronze_path)
+    'data/bronze/ign_contours_iris/20260121.parquet'
 
 Validation Rules:
     - Archive formats (7z) must specify inner_file
     - Non-archive formats must NOT specify inner_file
-    - Version must follow YYYY_MM_DD format with valid dates
-    - Storage paths must contain {layer} and {version} placeholders
+    - Dataset names are auto-injected from YAML keys (no need to specify in values)
+
+Note:
+    Path resolution is handled by PathResolver, not Dataset directly.
+    See path_resolver.py for medallion architecture path management.
 """
 
-import re
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -45,15 +60,14 @@ from pydantic import (
     model_validator,
 )
 
-from de_projet_perso.core.exceptions import DatasetNotFoundError, InvalidCatalogError
+from de_projet_perso.core.exceptions import (
+    AirflowContextError,
+    DatasetNotFoundError,
+    InvalidCatalogError,
+)
 from de_projet_perso.core.models import StrictModel
 from de_projet_perso.core.settings import settings
-
-# Compiled regex for version validation (performance optimization)
-_VERSION_PATTERN = re.compile(r"\d{4}_\d{2}_\d{2}")
-
-# Valid medallion architecture layers
-VALID_LAYERS = frozenset({"landing", "bronze", "silver", "gold"})
+from de_projet_perso.utils.pydantic import format_pydantic_errors
 
 
 class SourceFormat(StrEnum):
@@ -180,18 +194,33 @@ class IngestionFrequency(StrEnum):
         This is used to pass the correct template to tasks.
 
         Args:
-            no_dash: ...
+            no_dash: If True, return nodash version ({{ ds_nodash }} or {{ ts_nodash }}).
+                     If False, return version with separators ({{ ds }} or {{ ts }}).
+                     Default: False.
 
         Returns:
-            Airflow template string
+            Airflow template string that will be replaced at runtime.
+            - Hourly: "{{ ts_nodash }}" (20260121T143022) or "{{ ts }}" (2026-01-21T14:30:22)
+            - Others: "{{ ds_nodash }}" (20260121) or "{{ ds }}" (2026-01-21)
+
+        Raises:
+            Exception: If not running on Airflow (check settings.is_running_on_airflow)
 
         Example:
-            >>> dataset.get_airflow_version_template()
+            >>> freq = IngestionFrequency.DAILY
+            >>> freq.get_airflow_version_template(no_dash=True)
             '{{ ds_nodash }}'  # For daily/weekly/monthly datasets
+            >>> freq = IngestionFrequency.HOURLY
+            >>> freq.get_airflow_version_template(no_dash=True)
+            '{{ ts_nodash }}'  # For hourly datasets
         """
         if not settings.is_running_on_airflow:
-            # TODO: custom error
-            raise Exception("Not running on Airflow, use `format_datetime_as_version` instead")
+            raise AirflowContextError(
+                operation="`get_airflow_version_template`",
+                expected_context="airflow",
+                actual_context="not airflow",
+                suggestion="use `format_datetime_as_version` instead",
+            )
 
         if self == IngestionFrequency.HOURLY:
             return "{{ ts_nodash }}" if no_dash else "{{ ts }}"
@@ -199,18 +228,50 @@ class IngestionFrequency(StrEnum):
         return "{{ ds_nodash }}" if no_dash else "{{ ds }}"
 
     def format_datetime_as_version(self, dt: datetime, no_dash: bool = False) -> str:
-        """Format datetime matching Airflow template format.
+        """Format datetime as version string matching Airflow template format.
 
-        TODO.
+        This method generates a version string from a datetime object that matches
+        the format Airflow would produce from its template variables.
+        Use this in non-Airflow contexts (scripts, notebooks, tests).
+
+        Args:
+            dt: Datetime to format as version string
+            no_dash: If True, return compact format without separators.
+                     If False, return format with dashes/colons.
+                     Default: False.
+
+        Returns:
+            Version string formatted according to frequency:
+            - Hourly (no_dash=True): "20260121T143022" (YYYYMMDDTHHmmss)
+            - Hourly (no_dash=False): "2026-01-21-T-14-30-22"
+            - Daily/Weekly/Monthly/Yearly/Never (no_dash=True): "20260121" (YYYYMMDD)
+            - Daily/Weekly/Monthly/Yearly/Never (no_dash=False): "2026-01-21" (YYYY-MM-DD)
+
+        Raises:
+            Exception: If running on Airflow (should use get_airflow_version_template instead)
+
+        Example:
+            >>> from datetime import datetime
+            >>> freq = IngestionFrequency.DAILY
+            >>> freq.format_datetime_as_version(datetime(2026, 1, 21), no_dash=True)
+            '20260121'
+            >>> freq = IngestionFrequency.HOURLY
+            >>> freq.format_datetime_as_version(datetime(2026, 1, 21, 14, 30, 22), no_dash=True)
+            '20260121T143022'
         """
         if settings.is_running_on_airflow:
-            # TODO: custom error
-            raise Exception("Running on Airflow, use `get_airflow_version_template` instead")
+            raise AirflowContextError(
+                operation="format_datetime_as_version()",
+                expected_context="not airflow",
+                actual_context="airflow",
+                suggestion="use get_airflow_version_template() instead",
+            )
 
         if self == IngestionFrequency.HOURLY:
             return dt.strftime("%Y%m%dT%H%M%S" if no_dash else "%Y-%m-%d-T-%H-%M-%S")
 
-        return dt.strftime("%Y-%m-%d")
+        # Daily/Weekly/Monthly/Yearly/Never
+        return dt.strftime("%Y%m%d" if no_dash else "%Y-%m-%d")
 
 
 class Source(StrictModel):
@@ -224,8 +285,8 @@ class Source(StrictModel):
         url: HTTP(S) URL to download the source file
         format: Source file format (7z, parquet, JSON, etc.)
         inner_file: For archive formats only - the target file to extract
-            from the archive (e.g., "data.gpkg" inside "archive.7z").
-            Must be None for non-archive formats.
+                    from the archive (e.g., "data.gpkg" inside "archive.7z").
+                    Must be None for non-archive formats.
 
     Validation Rules:
         - Archive formats (7z) MUST specify inner_file
@@ -272,7 +333,7 @@ class Source(StrictModel):
 
         Raises:
             ValueError: If inner_file is missing for archive format or
-                present for non-archive format.
+                        present for non-archive format.
         """
         if self.format.is_archive and self.inner_file is None:
             raise ValueError(f"inner_file is required for archive format: {self.format}")
@@ -316,26 +377,29 @@ class IngestionMode(StrEnum):
 
 
 class Ingestion(StrictModel):
-    """Data ingestion configuration defining version, frequency, and mode.
+    """Data ingestion configuration defining frequency and mode.
 
     This model controls when and how data should be fetched from the source.
-    The version follows a date-based format to enable reproducibility and
-    historical data tracking.
+    Versioning is handled dynamically based on frequency (daily, hourly, etc.)
+    via IngestionFrequency.format_datetime_as_version() or Airflow templates.
 
     Attributes:
-        version: Dataset version in YYYY_MM_DD format (e.g., "2025_01_15")
-        frequency: Expected update frequency from the source
+        frequency: Expected update frequency from the source (e.g., daily, hourly).
+                   Determines version format: daily → "YYYYMMDD", hourly → "YYYYMMDDTHHMMSS"
         mode: Ingestion mode (snapshot or incremental)
-
-    Validation Rules:
-        - version must follow YYYY_MM_DD format with leading zeros
-        - version must be a valid calendar date
 
     Example:
         >>> ingestion = Ingestion(
         ...     frequency=IngestionFrequency.MONTHLY,
         ...     mode=IngestionMode.SNAPSHOT
         ... )
+        >>>
+        >>> # Version generation (outside Airflow)
+        >>> from datetime import datetime
+        >>> version = ingestion.frequency.format_datetime_as_version(
+        ...     datetime.now(), no_dash=True
+        ... )
+        >>> print(version)  # "20260121" for monthly/daily
 
     Note:
         Future versions will add incremental_key field for incremental mode,
@@ -373,31 +437,6 @@ class Dataset(StrictModel):
     description: str
     source: Source
     ingestion: Ingestion
-
-
-def format_pydantic_errors(pydantic_errors: ValidationError) -> dict[str, str]:
-    """Convert Pydantic validation errors to a structured dictionary.
-
-    This utility function transforms Pydantic's error format into a simpler
-    dict for logging and error messages.
-
-    Args:
-        pydantic_errors: Pydantic ValidationError exception.
-
-    Returns:
-        Dictionary mapping error location (dot-separated path) to error message.
-
-    Example:
-        >>> errors = format_pydantic_errors(validation_error) # noqa
-        {'datasets.ign_contours.source.url': 'invalid URL format'}
-
-    Note:
-        This function should be moved to a common utilities module for reuse
-        across the project.
-    """
-    return {
-        ".".join(str(item) for item in err["loc"]): err["msg"] for err in pydantic_errors.errors()
-    }
 
 
 class DataCatalog(StrictModel):
@@ -445,7 +484,7 @@ class DataCatalog(StrictModel):
 
         Raises:
             InvalidCatalogError: If the catalog file doesn't exist, contains
-                invalid YAML, or fails Pydantic validation.
+                                 invalid YAML, or fails Pydantic validation.
 
         Example:
             >>> catalog = DataCatalog.load(Path("data/catalog.yaml"))
@@ -514,19 +553,21 @@ if __name__ == "__main__":
     try:
         _catalog = DataCatalog.load(settings.data_catalog_file_path)
     except InvalidCatalogError as e:
-        logger.exception(message=str(e), extra=e.validation_errors)
+        logger.exception(str(e), extra=e.validation_errors)
         sys.exit(1)
 
-    logger.info(message=f"Catalog loaded: found {len(_catalog.datasets)} dataset(s)")
+    logger.info(f"Catalog loaded: found {len(_catalog.datasets)} dataset(s)")
 
     for _name, _dataset in _catalog.datasets.items():
-        logger.info(
-            message=f"dataset: {_name}",
-            # extra=_dataset.model_dump(),
-            extra={
-                "name": _dataset.name,
-                "provider": _dataset.source.provider,
-                "format": _dataset.source.format.value,
-                "testsomething": {"inside": {}},
-            },
-        )
+        logger.info(f"dataset: {_name}", extra=_dataset.model_dump())
+
+    # extra={
+    #     "name": _dataset.name,
+    #     "description": _dataset.description,
+    #     "provider": _dataset.source.provider,
+    #     "url": _dataset.source.url_as_str,
+    #     "format": _dataset.source.format.value,
+    #     "frequency": _dataset.ingestion.frequency.value,
+    #     "mode": _dataset.ingestion.mode.value,
+    #     "airflow_schedule": _dataset.ingestion.frequency.airflow_schedule,
+    # }

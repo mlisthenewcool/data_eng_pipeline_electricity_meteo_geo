@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from airflow.sdk import dag, task
 
 from de_projet_perso.core.data_catalog import DataCatalog
+from de_projet_perso.core.file_manager import FileManager
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.core.settings import settings
@@ -92,7 +93,8 @@ def bronze_retention_dag():
         summary = []
 
         for name, dataset in catalog.datasets.items():
-            resolver = PathResolver(dataset_name=dataset.name)
+            resolver = PathResolver(dataset.name)
+            file_manager = FileManager(resolver)
 
             # Get file sizes before deletion
             versions_to_delete = resolver.list_bronze_versions()
@@ -114,7 +116,7 @@ def bronze_retention_dag():
             freed_bytes = sum(v.stat().st_size for v in old_versions if v.exists())
 
             # Delete old versions
-            deleted_files = resolver.cleanup_old_bronze_versions(settings.bronze_retention_days)
+            deleted_files = file_manager.cleanup_old_bronze_versions(settings.bronze_retention_days)
 
             if deleted_files:
                 total_deleted += len(deleted_files)

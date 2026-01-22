@@ -15,14 +15,11 @@ from de_projet_perso.airflow.dags.dataset_pipelines_factory import (
     create_archive_dag,
     create_simple_dag,
 )
-from de_projet_perso.core.data_catalog import DataCatalog, Dataset
+from de_projet_perso.core.data_catalog import DataCatalog
 from de_projet_perso.core.exceptions import InvalidCatalogError
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.settings import settings
-
-
-def _should_use_archive_dag(dataset: Dataset) -> bool:
-    return dataset.source.format.is_archive
+from de_projet_perso.pipeline.manager import PipelineManager
 
 
 def _generate_all_dags() -> dict[str, DAG]:
@@ -51,14 +48,15 @@ def _generate_all_dags() -> dict[str, DAG]:
     for name, dataset in catalog.datasets.items():
         try:
             asset = _create_asset_for_dataset(dataset)
+            manager = PipelineManager(dataset=dataset)
 
             # TODO: injecter directement la fonction si plus de types de DAGs
-            if _should_use_archive_dag(dataset):
+            if dataset.source.format.is_archive:
                 dag_id = f"dag_archive_{name}"
-                dag_obj = create_archive_dag(dataset, asset)
+                dag_obj = create_archive_dag(manager, asset)
             else:
                 dag_id = f"dag_simple_{name}"
-                dag_obj = create_simple_dag(dataset, asset)
+                dag_obj = create_simple_dag(manager, asset)
 
             pipelines[name] = dag_obj
             logger.info(f"Created dataset DAG: {dag_id}")
@@ -68,7 +66,7 @@ def _generate_all_dags() -> dict[str, DAG]:
                 f"Failed to create DAG for {name}",
                 extra={"error": error_msg, "traceback": traceback.format_exc()},
             )
-            # TODO: Create individual error DAG with unique ID
+            # Create individual error DAG with unique ID
             pipelines[f"{name}_error"] = _create_error_dag(
                 dag_id=f"dataset_pipeline_{name}_error",
                 error_message=error_msg,

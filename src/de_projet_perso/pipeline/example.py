@@ -16,37 +16,51 @@ from datetime import datetime
 import httpx
 
 from de_projet_perso.core.data_catalog import DataCatalog
+from de_projet_perso.core.exception_handler import (
+    log_exception_with_extra,
+)
 from de_projet_perso.core.exceptions import (
     ArchiveNotFoundError,
+    DatasetNotFoundError,
     FileIntegrityError,
     FileNotFoundInArchiveError,
+    InvalidCatalogError,
 )
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.core.settings import settings
 from de_projet_perso.pipeline.manager import PipelineManager
 from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
-from de_projet_perso.pipeline.transformer import PipelineTransformer
 
 if __name__ == "__main__":
     # ===================================================================================
-    # /!\ DO NOT USE sys.exit(-1) WHEN RUNNING ON AIRFLOW. Let Airflow handle exceptions.
+    # /!\ DO NOT USE sys.exit() WHEN RUNNING ON AIRFLOW. Let Airflow handle exceptions.
     # ===================================================================================
     start_time = datetime.now()
 
-    _catalog = DataCatalog.load(settings.data_catalog_file_path)
+    try:
+        _catalog = DataCatalog.load(settings.data_catalog_file_path)
+    except InvalidCatalogError as e:
+        log_exception_with_extra(e)
+        sys.exit(-1)
 
     # __dataset_name = "meteo_france_stations"
     # __dataset_name = "odre_installations"
     __dataset_name = "ign_contours_iris"
     # __dataset_name = "odre_eco2mix_cons_def"
-    _dataset = _catalog.get_dataset(__dataset_name)
+
+    try:
+        _dataset = _catalog.get_dataset(__dataset_name)
+    except DatasetNotFoundError as ds_not_found_error:
+        log_exception_with_extra(ds_not_found_error)
+        sys.exit(-1)
 
     # ==============================
-    # Step 0: Prepare version & PathResolver
+    # Step 0: Prepare version, PathResolver and PipelineManager
     # ==============================
-    _run_version = _dataset.ingestion.frequency.format_datetime_as_version(start_time)
-    _path_resolver = PathResolver(dataset_name=_dataset.name, run_version=_run_version)
+    _version = _dataset.ingestion.frequency.format_datetime_as_version(start_time)
+    _path_resolver = PathResolver(dataset_name=_dataset.name)
+    _manager = PipelineManager(_dataset)
 
     # ==============================
     # Step 1: Check if metadata changed
@@ -54,7 +68,7 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Checking metadata ...")
     logger.info("=" * 80)
-    _metadata = PipelineManager.has_dataset_metadata_changed(_dataset)
+    _metadata = _manager.has_dataset_metadata_changed()
     if _metadata.action == PipelineAction.SKIP:
         _state = PipelineStateManager.load(_dataset.name)
         sys.exit(0)
@@ -71,7 +85,7 @@ if __name__ == "__main__":
     logger.info("Downloading dataset...")
     logger.info("=" * 80)
     try:
-        _download = PipelineManager.download(_dataset, _run_version)
+        _download = _manager.download(_version)
     except httpx.HTTPStatusError as e:
         logger.exception(
             f"Download failed. Server returned code: {e.response.status_code}",
@@ -101,10 +115,7 @@ if __name__ == "__main__":
         logger.info("Extracting archive...")
         logger.info("=" * 80)
         try:
-            _extraction = PipelineManager.extract_archive(
-                archive_path=_download.path,
-                dataset=_dataset,
-            )
+            _extraction = _manager.extract_archive(archive_path=_download.path)
         except (
             ArchiveNotFoundError,
             FileNotFoundInArchiveError,
@@ -113,24 +124,24 @@ if __name__ == "__main__":
             logger.exception("Extraction failed", extra={"error": str(e)})
             sys.exit(-1)
 
-        landing_path = _extraction.extracted_file_path
+        _landing_path = _extraction.extracted_file_path
         logger.info("Extraction completed !", extra=_extraction.to_serializable())
 
         logger.info("=" * 80)
         logger.info("Checking hash...")
         logger.info("=" * 80)
-        should_continue = PipelineManager.has_hash_changed(_dataset.name, _extraction)
+        _should_continue = _manager.has_hash_changed(_extraction)
     else:
         logger.info("=" * 80)
         logger.info("Checking hash...")
         logger.info("=" * 80)
-        should_continue = PipelineManager.has_hash_changed(_dataset.name, _download)
+        _should_continue = _manager.has_hash_changed(_download)
 
         # For non-archive: get landing_path from download
-        _extraction = None  # hacky
-        landing_path = _download.path
+        _extraction = None  # for analyzer: hacky
+        _landing_path = _download.path
 
-    if not should_continue:
+    if not _should_continue:
         logger.info("Stopping pipeline...")
         sys.exit(0)
 
@@ -142,9 +153,7 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to bronze layer...")
     logger.info("=" * 80)
-    _bronze = PipelineTransformer.to_bronze(
-        landing_path=landing_path, dataset=_dataset, run_version=_run_version
-    )
+    _bronze = _manager.to_bronze(landing_path=_landing_path, version=_version)
     logger.info("Bronze transformation completed", extra=_bronze.to_serializable())
 
     # ==============================
@@ -153,9 +162,7 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to silver layer...")
     logger.info("=" * 80)
-    _silver = PipelineTransformer.to_silver(
-        bronze_result=_bronze, dataset=_dataset, run_version=_run_version
-    )
+    _silver = _manager.to_silver()
 
     logger.info("Silver transformation completed !", extra=_silver.to_serializable())
 
@@ -167,7 +174,6 @@ if __name__ == "__main__":
     # ==============================
     # Step 6: Save successful run metadata
     # ==============================
-    # TODO, pas descendu entre les tâches actuellement donc Airflow ne pourra pas les utiliser
     if not _extraction:
         sha256 = _download.sha256
         file_size_mib = _download.size_mib
@@ -177,7 +183,7 @@ if __name__ == "__main__":
 
     PipelineStateManager.update_success(
         dataset_name=_dataset.name,
-        version=_run_version,
+        version=_version,
         etag=_metadata.remote_file_metadata.etag,
         last_modified=_metadata.remote_file_metadata.last_modified,
         content_length=_metadata.remote_file_metadata.content_length,

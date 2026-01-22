@@ -1,4 +1,8 @@
-"""TODO."""
+"""Base model configuration for strict schema enforcement.
+
+This module defines a centralized Pydantic base class that prevents the
+insertion of undocumented fields, ensuring data integrity across the project.
+"""
 
 from pydantic import BaseModel, ConfigDict
 

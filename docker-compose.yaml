@@ -58,6 +58,9 @@ services:
       AIRFLOW__LOGGING__LOGGING_LEVEL: "INFO" # TODO: consistency with custom logging
       AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 5 # by default
       # AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/de_projet_perso/airflow/dags # TODO: prod ?
+
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 1 # prevent file conflicts within same dataset
+      AIRFLOW__CORE__PARALLELISM: 32 # by default
     ports:
       - "127.0.0.1:8080:8080"
     volumes:

@@ -1,4 +1,4 @@
-"""Pipeline download and extraction logic.
+"""Pipeline logic.
 
 This module handles downloading source files and extracting archives,
 completely decoupled from Airflow orchestration.
@@ -13,19 +13,36 @@ Architecture:
 - Landing layer integration: download() and extract_archive() write directly
   to landing/ directory (no separate validate_landing step needed)
 - Uses PathResolver for all path operations
+
+Transformations:
+- Bronze: Landing → Parquet with normalized columns (versioned by run date)
+- Silver: Bronze latest → Business logic applied → current.parquet + backup.parquet
+
+Path Resolution:
+- Uses PathResolver for all path operations
+- Bronze: Creates versioned files ({date}.parquet) + updates latest.parquet symlink
+- Silver: Rotates current → backup before writing new current
 """
 
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 from de_projet_perso.core.data_catalog import Dataset
+from de_projet_perso.core.file_manager import FileManager
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.path_resolver import PathResolver
-from de_projet_perso.pipeline.results import CheckMetadataResult, DownloadResult, ExtractionResult
-from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
-from de_projet_perso.utils.downloader import (
-    download_to_file,
-    extract_7z,
+from de_projet_perso.pipeline.results import (
+    BronzeResult,
+    CheckMetadataResult,
+    DownloadResult,
+    ExtractionResult,
+    SilverResult,
 )
+from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
+from de_projet_perso.pipeline.transformations import get_bronze_transform, get_silver_transform
+from de_projet_perso.utils.archive_extractor import extract_7z
+from de_projet_perso.utils.downloader import download_to_file
 from de_projet_perso.utils.remote_checker import (
     RemoteFileInfo,
     get_remote_file_info,
@@ -33,11 +50,13 @@ from de_projet_perso.utils.remote_checker import (
 )
 
 
+@dataclass(frozen=True)
 class PipelineManager:
     """All functions used for pipeline data sources."""
 
-    @staticmethod
-    def has_dataset_metadata_changed(dataset: Dataset) -> CheckMetadataResult:
+    dataset: Dataset
+
+    def has_dataset_metadata_changed(self) -> CheckMetadataResult:
         """Check if remote file has changed using HTTP HEAD (Smart Skip #1).
 
         This performs HTTP HEAD request to fetch ETag, Last-Modified, and
@@ -55,16 +74,16 @@ class PipelineManager:
         """
         # 1. Fetch remote metadata
         remote_info = get_remote_file_info(
-            url=dataset.source.url_as_str,
+            url=self.dataset.source.url_as_str,
             timeout=30,  # TODO: mettre dans setting. 30 seconds for HTTP HEAD
         )
 
         # 2. Load previous state
-        state = PipelineStateManager.load(dataset.name)
+        state = PipelineStateManager.load(self.dataset.name)
 
         # 3. FIRST_RUN: No previous state
         if state is None or state.last_successful_run is None:
-            logger.info(f"No previous successful run found for {dataset.name}, will run")
+            logger.info(f"No previous successful run found for {self.dataset.name}, will run")
 
             return CheckMetadataResult(
                 action=PipelineAction.FIRST_RUN,
@@ -74,7 +93,7 @@ class PipelineManager:
         # 4. Extract previous remote metadata from download stage
         if not state.last_successful_run:
             # TODO: traiter comme une erreur ici ? ou considérer comme FIRST_RUN ?
-            logger.error(f"No successful run found for {dataset.name}, treating as first run")
+            logger.error(f"No successful run found for {self.dataset.name}, treating as first run")
             raise Exception  # TODO: erreur spécifique à créer
 
         previous_remote = RemoteFileInfo(
@@ -89,7 +108,7 @@ class PipelineManager:
         # SKIP: Remote unchanged
         if not changed_result.has_changed:
             logger.info(
-                f"Pipeline skipped for {dataset.name}: remote unchanged",
+                f"Pipeline skipped for {self.dataset.name}: remote unchanged",
                 extra={
                     "reason": changed_result.reason,
                     "etag": remote_info.etag,
@@ -105,7 +124,7 @@ class PipelineManager:
 
         # REFRESH: Remote changed
         logger.info(
-            f"Pipeline will execute for {dataset.name}: remote changed",
+            f"Pipeline will execute for {self.dataset.name}: remote changed",
             extra={
                 "reason": changed_result.reason,
                 "action": PipelineAction.REFRESH.value,
@@ -120,34 +139,28 @@ class PipelineManager:
             remote_file_metadata=remote_info,
         )
 
-    @staticmethod
-    def download(dataset: Dataset, run_version: str) -> DownloadResult:
+    def download(self, version: str) -> DownloadResult:
         """Download source file from URL.
 
         Downloads to landing directory preserving original filename from server.
         The filename is extracted from Content-Disposition header or URL path.
 
         Args:
-            dataset: Dataset configuration
-            run_version: Run version for path resolution (Airflow template or explicit)
+            version: Version for path resolution (Airflow template or explicit)
 
         Returns:
             DownloadResult with path, sha256, size, and original_filename
         """
         # Get landing directory (not file path - preserves original filename)
-        resolver = PathResolver(
-            dataset_name=dataset.name,
-            run_version=run_version,
-        )
+        resolver = PathResolver(dataset_name=self.dataset.name)
 
         return download_to_file(
-            url=dataset.source.url_as_str,
-            dest_dir=resolver.landing_dir(),
-            default_name=f"{run_version}.{dataset.source.format.value}",
+            url=self.dataset.source.url_as_str,
+            dest_dir=resolver.landing_dir,
+            default_name=f"{version}.{self.dataset.source.format.value}",
         )
 
-    @staticmethod
-    def extract_archive(dataset: Dataset, archive_path: Path) -> ExtractionResult:
+    def extract_archive(self, archive_path: Path) -> ExtractionResult:
         """Extract archive and recalculate SHA256.
 
         For archive formats (7z):
@@ -157,7 +170,6 @@ class PipelineManager:
 
         Args:
             archive_path: Path to archive file (or direct file if not archive)
-            dataset: Dataset configuration
 
         Returns:
             ExtractionResult with extracted file info, dual SHA256 tracking, and original filename
@@ -166,21 +178,25 @@ class PipelineManager:
             ValueError: If archive format requires inner_file but none specified
             FileNotFoundError: If extracted file doesn't exist after extraction
         """
-        if not dataset.source.format.is_archive:
-            logger.warning(f"Trying to extract a non-archive format: {dataset.source.format.value}")
+        if not self.dataset.source.format.is_archive:
+            logger.warning(
+                f"Trying to extract a non-archive format: {self.dataset.source.format.value}"
+            )
             raise Exception  # TODO exception spécifique
 
-        if dataset.source.inner_file is None:
-            raise ValueError(f"inner_file required for archive format: {dataset.source.format}")
+        if self.dataset.source.inner_file is None:
+            raise ValueError(
+                f"inner_file required for archive format: {self.dataset.source.format}"
+            )
 
         # Extract to same directory as archive (preserves directory structure)
         landing_dir = archive_path.parent
 
         file_info = extract_7z(
             archive_path=archive_path,
-            target_filename=dataset.source.inner_file,
+            target_filename=self.dataset.source.inner_file,
             dest_dir=landing_dir,
-            validate_sqlite=Path(dataset.source.inner_file).suffix == ".gpkg",
+            validate_sqlite=Path(self.dataset.source.inner_file).suffix == ".gpkg",
         )
 
         logger.info(
@@ -200,9 +216,8 @@ class PipelineManager:
             size_mib=file_info.size_mib,
         )
 
-    @staticmethod
     def has_hash_changed(
-        dataset_name: str, download_or_extract_result: DownloadResult | ExtractionResult
+        self, download_or_extract_result: DownloadResult | ExtractionResult
     ) -> bool:
         """Download file and check if SHA256 has changed (Smart Skip #2).
 
@@ -212,7 +227,6 @@ class PipelineManager:
         all downstream processing and clean up the downloaded file.
 
         Args:
-            dataset_name: ...
             download_or_extract_result: ...
 
         Returns:
@@ -221,10 +235,10 @@ class PipelineManager:
         """
         # TODO: passer seulement le hash en paramètre et laisser la task Airflow nettoyer les
         #  fichiers car il serait mieux de séparer les deux DAGs
-        state = PipelineStateManager.load(dataset_name)
+        state = PipelineStateManager.load(self.dataset.name)
 
         if not state or not state.last_successful_run:
-            logger.info(f"Could not find a previous successful run for {dataset_name}")
+            logger.info(f"Could not find a previous successful run for {self.dataset.name}")
             return True
 
         # find the correct hash to compare with
@@ -236,11 +250,11 @@ class PipelineManager:
             known_sha256 = download_or_extract_result.sha256
 
         if known_sha256 != state.last_successful_run.sha256:
-            logger.info(f"Hash changed for {dataset_name}: processing new data")
+            logger.info(f"Hash changed for {self.dataset.name}: processing new data")
             return True
 
         # hash unchanged - data is identical (false change)
-        logger.info(f"Hash unchanged for {dataset_name}: false change detected")
+        logger.info(f"Hash unchanged for {self.dataset.name}: false change detected")
 
         # Cleanup downloaded file (duplicate)
         try:
@@ -256,3 +270,133 @@ class PipelineManager:
 
         logger.info("Removed duplicate downloaded file")
         return False
+
+    # =============================================================================
+    # Transformations
+    # =============================================================================
+
+    def to_bronze(self, landing_path: Path, version: str) -> BronzeResult:
+        """Convert landing file to Parquet with normalized column names.
+
+        Bronze layer transformations:
+        1. Read raw file from landing
+        2. Apply custom transformations (normalize columns, filter, etc.)
+        3. Write to versioned bronze Parquet file
+        4. Update latest.parquet symlink
+        5. Delete landing file
+
+        Args:
+            landing_path: Path to landing file (with original filename)
+            version: Version for this run (e.g., "2025-01-21" or "20250121T143022")
+
+        Returns:
+            BronzeResult with row count and columns
+
+        Raises:
+            NotImplementedError: If no bronze transformation is registered
+        """
+        resolver = PathResolver(dataset_name=self.dataset.name)
+
+        bronze_path = resolver.bronze_path(version)
+        bronze_path.parent.mkdir(parents=True, exist_ok=True)
+
+        logger.info(
+            f"Converting to bronze for {self.dataset.name}",
+            extra={
+                "landing_path": str(landing_path),
+                "bronze_path": str(bronze_path),
+                "version": version,
+            },
+        )
+
+        # Retrieve dataset-specific bronze transformations
+        transforms = get_bronze_transform(self.dataset.name)
+        if transforms is None:
+            raise NotImplementedError(
+                f"No bronze transformation registered for dataset: {self.dataset.name}"
+            )
+
+        # Apply the transformations
+        df = transforms(landing_path)
+        df.write_parquet(bronze_path)
+
+        # Update latest symlink to point to this version
+        file_manager = FileManager(resolver)
+        file_manager.update_bronze_latest_link(version)
+
+        # Cleanup all landing files (inside the landing directories)
+        if resolver.landing_dir.exists() and resolver.landing_dir.is_dir():
+            shutil.rmtree(resolver.landing_dir)
+
+        columns = df.columns
+        row_count = len(df)
+
+        logger.info(
+            f"Bronze conversion complete for {self.dataset.name}",
+            extra={
+                "n_rows": row_count,
+                "n_columns": len(columns),
+                "bronze_path": bronze_path,
+                "latest_link": resolver.bronze_latest_path,
+            },
+        )
+
+        return BronzeResult(row_count=row_count, columns=columns)
+
+    def to_silver(self) -> SilverResult:
+        """Apply business transformations to create silver layer.
+
+        Silver layer transformations:
+        1. Rotate silver files (current → backup)
+        2. Read from bronze latest.parquet
+        3. Apply custom business logic
+        4. Write to silver current.parquet
+
+        Returns:
+            SilverResult with row count and columns
+        """
+        # TODO: do we need bronze_result ?
+        resolver = PathResolver(dataset_name=self.dataset.name)
+
+        logger.info(
+            f"Transforming to silver for {self.dataset.name}",
+            extra={
+                "bronze_source": resolver.bronze_latest_path,
+                "silver_dest": resolver.silver_current_path,
+            },
+        )
+
+        # Retrieve dataset-specific silver transformations
+        transforms = get_silver_transform(self.dataset.name)
+        if transforms is None:
+            raise NotImplementedError(
+                f"No silver transformation registered for dataset: {self.dataset.name}"
+            )
+
+        # Apply the transformations
+        df = transforms(resolver.bronze_latest_path)
+
+        # Rotate silver BEFORE writing to disk: current → backup
+        file_manager = FileManager(resolver)
+        file_manager.rotate_silver()
+
+        # TODO: at this point, is it necessary to create parent ?
+        resolver.silver_current_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Now that we rotated versions, write to disk
+        df.write_parquet(resolver.silver_current_path)
+
+        columns = df.columns
+        row_count = len(df)
+
+        logger.info(
+            f"Silver transformation complete for {self.dataset.name}",
+            extra={
+                "n_rows": row_count,
+                "n_columns": len(columns),
+                "silver_current": resolver.silver_current_path,
+                "silver_backup": resolver.silver_backup_path,
+            },
+        )
+
+        return SilverResult(row_count=row_count, columns=df.columns)

@@ -18,7 +18,7 @@ Key Environment Variables:
     ENV_HASH_CHUNK_SIZE: Chunk size for file hashing (Default: 1024 * 128)
 
 Example:
-    >>> from de_projet_perso.core.settings import settings
+    >>> from de_projet_perso.core.settings import settings # noqa
     ... print(settings.data_dir_path)
 
     # Override via environment
@@ -50,8 +50,14 @@ class Settings(BaseSettings):
         default="DEBUG", description="The logger verbosity level"
     )
 
+    # =========================================================================
+    # Data config
+    # =========================================================================
     bronze_retention_days: int = Field(
-        default=365, description="Retention period for bronze layer (days)"
+        default=365,  # 1 year
+        description="Number of days to retain bronze layer versions",
+        gt=0,
+        le=365 * 3,  # Max 3 years
     )
 
     # =========================================================================
@@ -66,6 +72,30 @@ class Settings(BaseSettings):
         validation_alias="AIRFLOW_HOME",  # the variable doesn't have the ENV prefix
         description="The Airflow home directory. Uses standard AIRFLOW_HOME env var",
     )
+
+    # =========================================================================
+    # Retries settings TODO: setup for Airflow
+    # =========================================================================
+    # retry_max_attempts: int = Field(
+    #     default=3,
+    #     description="Maximum number of retry attempts",
+    #     ge=1,
+    #     le=10,
+    # )
+    #
+    # retry_initial_delay: float = Field(
+    #     default=1.0,
+    #     description="Initial delay between retries (seconds)",
+    #     gt=0,
+    #     le=60.0,
+    # )
+    #
+    # retry_backoff_factor: float = Field(
+    #     default=2.0,
+    #     description="Multiplier for delay after each retry",
+    #     ge=1.0,
+    #     le=10.0,
+    # )
 
     @computed_field
     @property
@@ -132,30 +162,6 @@ class Settings(BaseSettings):
     )
 
     # =========================================================================
-    # Retries settings TODO: setup for Airflow
-    # =========================================================================
-    # retry_max_attempts: int = Field(
-    #     default=3,
-    #     description="Maximum number of retry attempts",
-    #     ge=1,
-    #     le=10,
-    # )
-    #
-    # retry_initial_delay: float = Field(
-    #     default=1.0,
-    #     description="Initial delay between retries (seconds)",
-    #     gt=0,
-    #     le=60.0,
-    # )
-    #
-    # retry_backoff_factor: float = Field(
-    #     default=2.0,
-    #     description="Multiplier for delay after each retry",
-    #     ge=1.0,
-    #     le=10.0,
-    # )
-
-    # =========================================================================
     # Hash Settings
     # =========================================================================
     hash_algorithm: Literal["sha256", "sha512", "sha1", "md5"] = Field(
@@ -168,16 +174,6 @@ class Settings(BaseSettings):
         description="Chunk size for file hashing (bytes)",
         gt=0,
         le=1024 * 1024,  # Max 1 MB
-    )
-
-    # =========================================================================
-    # Bronze Retention Settings
-    # =========================================================================
-    bronze_retention_days: int = Field(
-        default=365,  # 1 year
-        description="Number of days to retain bronze layer versions",
-        gt=0,
-        le=3650,  # Max 10 years
     )
 
     # =========================================================================

@@ -1,153 +1,99 @@
-# Data Engineering Personal Project
+# Projet personnel Data Engineering
 
-Objectif : pipeline de données énergétiques, météorologiques et géographiques françaises
+Intégrer et enrichir les données suivantes disponibles en accès libre pour prédire et lier les indicateurs météo à
+la production et la consommation électrique en France.
 
-## Installation
+- la production et la consommation d'électricité en France par ODRÉ (OpenData Réseaux-Énergies) :
+    - la liste des installations de production
+    - la production et la consommation d'électricité au niveau régional avec une précision au pas de l'heure
+        - consolidées et définitives
+        - temps réel
 
-## Architecture
+
+- les observations météorologiques qualifiées par Météo France :
+    - la liste des stations
+    - les données qualifiées avec une précision au pas de l'heure
+
+
+- la maille IRIS publiée par l'IGN pour lier les données ci-dessus
+
+---
+Ce projet met en place une architecture médaillon orchestrée par un ordonnanceur (_scheduler_) pour traiter la
+donnée dans le pas de temps le plus fin disponible.
+
+- Outils techniques utilisés :
+    - Python 3.13
+    - Airflow 3.1
+    - Postgres 17
+    - Marimo 0.19 (notebooks)
+    - Docker & Docker Compose 5.0
+    - GitHub Actions (CI)
+    - Code quality : pytest, coverage, ruff, ty, pre-commit hooks
+
+
+- Déploiement (à venir)
+
+---
+
+- Plus de détails ici :
+    - [Documentation de développement](docs/README_DEV.md)
+    - [Documentation technique](docs/README_TECH.md)
 
 ## Sources de données
 
-- IGN CONTOURS-IRIS
-- ODRE Installations
-- Météo France Stations
+- IGN :
+    - Contours iris
 
-## Data Pipeline
+- ODRÉ :
+    - Registre national des installations de production et de stockage d'électricité
+    - Données éCO2mix régionales consolidées et définitives
+    - Données éCO2mix régionales temps réel
 
-Voir [README_DATA.md](docs/README_DATA.md)
+- Météo France :
+    - Informations sur les stations
+    - Données climatologiques de base — horaires
 
-### Architecture des données : Médaillon
+---
 
-- Landing
-    - Données brutes téléchargées
-    - Format original (7z, JSON, Parquet)
-    - Supprimées si le transfert vers la couche bronze a réussi
-- Bronze
-    - Renommage des colonnes pour suivre la convention snake_case
-    - Conversion en format Parquet standardisé
-    - Conservées en fonction de la politique de rétention (par dataset ou global)
-- Silver
-    - Données nettoyées et normalisées
-    - Les données des datasets ne doivent plus être modifiées
-        - TODO : comment faire dans le cas d'un dataset incrémental ?
-- Gold
-    - Données enrichies et agrégées entre datasets
-    - Prêtes pour analyse/visualisation
+Plus de détails ici : [documentation des données](docs/README_DATA_SOURCES.md)
 
-### Logique du pipeline par dataset
+## Architecture des données : Médaillon
 
 ```
-decide_action (branch)
-    ├── mark_skipped (si action = SKIP) ✅ affiche raison détaillée
-    └── validate_state_coherence (branch) ✅ fusionne log_state_summary + validation
-            ├── cleanup_incoherent_state → download_data (si état incohérent) ✅
-            └── download_data (si état cohérent) ✅
-                    └── check_extraction_needed (branch) ✅
-                            ├── extract_archive (si is_archive) ✅ cleanup .7z + validation
-                            └── skip_extraction (si pas archive) ✅ validation directe
-                                    └── convert_to_bronze ✅
-                                            └── transform_to_silver (émet Metadata enrichies) ✅
+Landing (temporary) → Bronze (versioned) → Silver (current + backup) → Gold (analytics)
 ```
 
-## Développement
+---
 
-Voir [README_DX.md](docs/README_DX.md)
+Plus de détails ici : [documentation architecture des données](docs/README_DATA.md)
 
-## TODO
+## Ordonnanceur
 
-### Priorité 1
+- DAG Simple (fichiers directs : Parquet, JSON, etc.)
 
-- [x] déplacer data_catalog.yaml dans le dossier data et modifier le build Docker
-    - [ ] TODO de mise en prod dans le docker-compose.yaml
-- [x] passage à pydantic-settings
+```
+check_remote_changed (short-circuit)
+    ├── [SKIP] → downstream skipped (remote unchanged - ETag/Last-Modified identiques)
+    └── [CONTINUE] → download_then_check_hash (short-circuit)
+                        ├── [SKIP] → downstream skipped (SHA256 identique - false change)
+                        └── [CONTINUE] → convert_to_bronze
+                                            └── transform_to_silver (émet Asset Metadata)
+```
 
-- [ ] corriger les problèmes de résolution de chemin
-    - [x] calcul dans settings directement
-    - [x] trouver un moyen de gérer proprement les archives
-        - ~~[ ] ajout inner_path_extension au Dataset ?~~
-        - [x] calcul avec `Path(...).with_suffix(...)`
-    - [x] résoudre les incohérences de nommage de fichiers (avant landing garde les mêmes noms que sur le serveur,
-      ce n'est qu'à partir de la couche bronze qu'on renomme avec nos conventions)
-    - [ ] basculer sur une architecture de résolution de chemin découplée du Dataset
-        - [ ] retirer la propriété `storage` du catalogue de données
-        - [ ] ajouter classe PipelinePathResolver (@property landing() → Path...)
-        - [x] ajouter nom du dataset dans sa définition
-        - [ ] uniformiser les chemins entre landing & les autres couches
+- DAG Archive (fichiers 7z)
 
-- [ ] pipeline
-    - [x] passage à 2 DAGs spécifiques (un avec et un sans extraction d'archive)
-    - [x] retirer tâche "landing" qui est juste là pour les XCom ?
-    - ~~[ ] ajouter class PipelineContext qui réduit le nombre de passages d'arguments et centralise l'info~~
-    - [ ] documenter choix des Serializer, des transformations et du déroulement logique du pipeline
-    - [x] créer exemple complet pipeline sans Airflow
-    - [x] cohérence des arguments passés entre chaque tâche
-    - [x] passer tous les arguments nécessaires aux métadonnées
-    - [ ] fail-fast si transformations bronze/silver pas enregistrées
+```
+check_remote_changed (short-circuit)
+    ├── [SKIP] → downstream skipped (remote unchanged - ETag/Last-Modified identiques)
+    └── [CONTINUE] → download_then_check_hash (short-circuit)
+                        ├── [SKIP] → downstream skipped (SHA256 archive identique)
+                        └── [CONTINUE] → extract_archive_then_check_hash (short-circuit)
+                                            ├── [SKIP] → downstream skipped (SHA256 fichier extrait identique)
+                                            └── [CONTINUE] → convert_to_bronze
+                                                                └── transform_to_silver (émet Asset Metadata)
 
-- [ ] check_should_run doit arriver après contrôle de la cohérence de l'état actuel ? même tâche ?
-    - → check_state
-        - → si ok → check_should_run
-        - → sinon → heal_state
-            - → download_data → ...
+```
 
-- [x] ajout mécanisme pour vérifier la "fraîcheur" des données
-    - [x] requête HEAD si possible
-    - [x] comparaison hash_sha256
+## Déploiement
 
-- [ ] complexité du state management: on gère un système indépendant + celui de Airflow
-    - [ ] vérifier qu'on ne puisse pas tout passer sous Airflow (vérifier sha256 pour sûr, autre chose ?)
-
-- [ ] cohérence de la gestion des exceptions & des logs associés
-    - [ ] choix stratégie (fonctions Pipeline ? tasks ? fonctions bas-niveau ?)
-    - [ ] documentation de la solution choisie
-
-- [x] cohérence entre ExtractionInfo et ExtractionResult
-
-- [x] normalement OK d'utiliser short_circuit même sans renvoyer explicitement `True` car le dictionnaire suivant ne
-  sera (jamais ?) interprété à `False`. Idem pour la tâche download_and_check_hash_task
-- [ ] documenter le comportement ci-dessus
-
-- [ ] transformations silver
-    - [ ] data quality (GX ou Soda Core ou autre librairie ?)
-
-## Priorité 2
-
-- [ ] résoudre bug affichage des logs dans airflow pour le niveau DEBUG
-
-- [ ] comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant le parsing
-  des DAGS ?
-
-- [ ] ajout transformations de base silver
-    - [ ] normaliser (types, unités)
-    - [ ] cohérence générale (pas de données aberrantes)
-- [ ] valider par de la data quality les couches bronze & silver
-
-- [ ] ajout du mode incrémental ?
-
-## Priorité 3
-
-- [ ] modifier les raise ... from e
-
-- ~~[ ] ajout d'un type pour le nom des layers (StrEnum)~~
-
-- [ ] mettre en place politique de rétention pour la couche bronze
-- [ ] ajout des documentations des données avec les anciens fichiers
-- [ ] regarder @setup & @teardown pour le cleanup Airflow
-
-- [ ] tests/
-    - [ ] test_logger
-        - [ ] vérifier la redirection vers Airflow
-        - [ ] vérifier que passer un objet non mutable à la méthode _format_extra ne change rien
-    - [ ] tester au moins les fonctions critiques
-        - [ ] download, extract, transformations
-
-### Priorité 4
-
-- [ ] ajouter Observabilité/SLA/Alerts/OpenTelemetry
-- [ ] ajout métrique de performances
-- [ ] [ajouter configuration Open Lineage](https://airflow.apache.org/docs/apache-airflow-providers-openlineage/stable/guides/user.html)
-- [ ] si besoin de paralléliser, regarder @task.map
-- [ ] si besoin d'améliorer perfs, faire du incremental loading pour les datasets, compresser les parquets avec zstd
-- [ ] potentiel problème de performances pour la lecture des dataframes (à documenter, pour l'instant cohérence
-  bronze/silver lors du passage des arguments aux fonctions de transformations). Puisqu'on change de tâche entre
-  bronze & silver, on doit relire à nouveau le même dataframe.
+...

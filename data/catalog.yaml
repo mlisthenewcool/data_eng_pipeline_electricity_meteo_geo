@@ -15,21 +15,6 @@
 #    timezone: "Europe/Paris"
 #    refine.nature: "Données consolidées"
 
-
-#datasets:
-#  ign_contours_iris:
-#    description: "..."
-#    source:
-#      provider: "IGN"
-#      url: "..."
-#      format: "7z"
-#      inner_file: "iris.gpkg"
-#    ingestion:
-#      frequency: "daily"
-#      mode: "snapshot"
-
-
-
 datasets:
   ign_contours_iris:
     description: "La base de données de référence pour la diffusion infra-communale des résultats du recensement de la population par Iris, de précision décamétrique"

@@ -104,7 +104,7 @@ class PipelineState(StrictModel):
     dataset_name: str
     current_version: str
     last_successful_run: RunRecord | None = None
-    last_failed_run: FailedRunRecord | None = None
+    # last_failed_run: FailedRunRecord | None = None # TODO: implémenter logique
     # history: list[dict] = [] # TODO: implémenter logique
 
 
