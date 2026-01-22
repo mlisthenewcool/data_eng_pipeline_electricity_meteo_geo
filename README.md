@@ -4,6 +4,58 @@ Objectif : pipeline de données énergétiques, météorologiques et géographiq
 
 ## Installation
 
+### Prérequis
+
+- Python 3.13+
+- Docker & Docker Compose
+- `uv` (gestionnaire de dépendances Python)
+
+### Installation rapide
+
+```bash
+# Cloner le dépôt
+git clone <repo_url>
+cd de_projet_perso
+
+# Installer uv (si pas déjà installé)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Synchroniser les dépendances
+uv sync --upgrade
+
+# Configurer les variables d'environnement
+cp .env.example .env
+# Éditer .env avec vos valeurs
+
+# Démarrer Airflow avec Docker
+docker compose up --detach
+
+# Accéder à l'interface Airflow
+# URL: http://localhost:8080
+```
+
+### Structure du projet
+
+```
+de_projet_perso/
+├── data/                     # Données (git-ignored)
+│   ├── landing/              # Téléchargements temporaires
+│   ├── bronze/               # Versions historiques (365j)
+│   ├── silver/               # current.parquet + backup.parquet
+│   └── _state/               # État JSON du pipeline
+├── src/de_projet_perso/
+│   ├── core/                 # Composants centraux (logger, settings, catalog)
+│   ├── pipeline/             # Logique du pipeline (manager, transformer)
+│   ├── airflow/              # DAGs et adaptateurs Airflow
+│   └── utils/                # Utilitaires (downloader, extractor)
+├── tests/                    # Tests unitaires et d'intégration
+├── docs/                     # Documentation
+│   └── README_*.md
+├── AGENTS.md                 # Guide pour assistants IA
+├── CLAUDE.md                 # Guide Claude Code
+└── pyproject.toml            # Configuration du projet
+```
+
 ## Architecture
 
 ## Sources de données
@@ -16,25 +68,74 @@ Objectif : pipeline de données énergétiques, météorologiques et géographiq
 
 Voir [README_DATA.md](docs/README_DATA.md)
 
-### Architecture des données : Médaillon
+### Architecture des données : Médaillon (2026-01)
 
-- Landing
+```
+Landing → Bronze (versioned) → Silver (current + backup) → Gold (analytics)
+```
+
+**Structure des répertoires**:
+
+```
+data/
+├── landing/{dataset_name}/              # Temporaire (supprimé après Bronze)
+│   └── {nom_original_fichier}          # Préserve les noms du serveur
+├── bronze/{dataset_name}/
+│   ├── 2026-01-21.parquet              # Versions quotidiennes ({{ ds }})
+│   ├── 2026-01-22.parquet              # OU horaires ({{ ts_nodash }})
+│   └── latest.parquet → 2026-01-22.parquet  # Lien symbolique vers la dernière
+├── silver/{dataset_name}/
+│   ├── current.parquet                  # Version active (utilisée en aval)
+│   └── backup.parquet                   # Version précédente (rollback)
+├── gold/{dataset_name}/                 # Prêt pour analyse (non implémenté)
+└── _state/{dataset_name}.json           # État du pipeline
+```
+
+**Caractéristiques par couche**:
+
+- **Landing**
     - Données brutes téléchargées
     - Format original (7z, JSON, Parquet)
-    - Supprimées si le transfert vers la couche bronze a réussi
-- Bronze
-    - Renommage des colonnes pour suivre la convention snake_case
-    - Conversion en format Parquet standardisé
-    - Conservées en fonction de la politique de rétention (par dataset ou global)
-- Silver
+    - **Supprimées** après transfert réussi vers Bronze
+    - Noms de fichiers préservés du serveur
+
+- **Bronze**
+    - Renommage des colonnes (snake_case)
+    - Conversion en Parquet standardisé
+    - **Versions historiques** : 1 fichier par exécution (quotidien/horaire)
+    - **Rétention** : 365 jours par défaut (`ENV_BRONZE_RETENTION_DAYS`)
+    - **Symlink `latest.parquet`** : mis à jour automatiquement
+    - **Nettoyage automatique** : DAG `maintenance_bronze_retention` hebdomadaire
+
+- **Silver**
     - Données nettoyées et normalisées
-    - Les données des datasets ne doivent plus être modifiées
-        - TODO : comment faire dans le cas d'un dataset incrémental ?
-- Gold
+    - **Uniquement 2 fichiers** : `current.parquet` (actif) + `backup.parquet` (N-1)
+    - **Rollback instantané** : `backup → current` sans retraitement
+    - **Rotation atomique** : `current → backup` avant chaque nouvelle écriture
+    - Lit toujours depuis `bronze/latest.parquet` (pas de version spécifique)
+
+- **Gold**
     - Données enrichies et agrégées entre datasets
     - Prêtes pour analyse/visualisation
+    - **TODO** : Non encore implémenté
+
+**Gestion des versions** :
+
+| Fréquence | Format de version | Exemple           | Airflow Template  |
+|-----------|-------------------|-------------------|-------------------|
+| Quotidien | `YYYY-MM-DD`      | `2026-01-21`      | `{{ ds }}`        |
+| Horaire   | `YYYYMMDDTHHmmss` | `20260121T143022` | `{{ ts_nodash }}` |
+
+**Avantages de cette architecture** :
+
+- ✅ **Historique Bronze** : Debug, audit, comparaison de versions (1 an)
+- ✅ **Rollback Silver rapide** : <1 seconde sans retraitement
+- ✅ **Stockage optimisé** : Silver (2 fichiers), Bronze (rétention configurée)
+- ✅ **Traçabilité** : Chaque version Bronze liée à une exécution Airflow
 
 ### Logique du pipeline par dataset
+
+TODO: mettre à jour
 
 ```
 decide_action (branch)
@@ -49,105 +150,147 @@ decide_action (branch)
                                             └── transform_to_silver (émet Metadata enrichies) ✅
 ```
 
+## Architecture Technique
+
+### Gestion des chemins (PathResolver)
+
+Le projet utilise `PathResolver` pour centraliser la construction des chemins du pipeline :
+
+```python
+from de_projet_perso.core.path_resolver import PathResolver
+from de_projet_perso.core.data_catalog import DataCatalog
+from de_projet_perso.core.settings import settings
+from datetime import datetime
+
+# Charger le catalogue
+catalog = DataCatalog.load(settings.data_catalog_file_path)
+dataset = catalog.get_dataset('ign_contours_iris')
+
+# Générer la version (scripts/notebooks)
+run_version = dataset.ingestion.frequency.format_datetime_as_version(
+    datetime.now(),
+    no_dash=True
+)  # → "20260121" (quotidien) ou "20260121T143022" (horaire)
+
+# Créer le resolver
+resolver = PathResolver(dataset_name=dataset.name)
+
+# Accéder aux chemins
+bronze_path = resolver.bronze_path  # data/bronze/ign_contours_iris/20260121.parquet
+bronze_latest = resolver.bronze_latest_path  # data/bronze/ign_contours_iris/latest.parquet
+silver_current = resolver.silver_current_path  # data/silver/ign_contours_iris/current.parquet
+```
+
+**Dans les DAGs Airflow**, utilisez les templates Airflow :
+
+```python
+run_version = dataset.ingestion.frequency.get_airflow_version_template(no_dash=True)  # noqa
+# → "{{ ds_nodash }}" ou "{{ ts_nodash }}" (remplacé au runtime)
+```
+
+Voir [ARCHITECTURE_DECISIONS.md](docs/ARCHITECTURE_DECISIONS.md) pour les choix de design.
+
 ## Développement
 
-Voir [README_DX.md](docs/README_DX.md)
+### Commandes rapides
 
-## TODO
+```bash
+# Environnement
+uv sync --upgrade              # Synchroniser les dépendances
+source .venv/bin/activate      # Activer l'environnement virtuel
 
-### Priorité 1
+# Qualité du code (avant commit)
+uv run ruff check --fix        # Linter + auto-fix
+uv run ruff format             # Formatage
+uv run ty check                # Vérification de types (doit passer)
+uv run pre-commit run --all-files  # Tous les checks
 
-- [x] déplacer data_catalog.yaml dans le dossier data et modifier le build Docker
-    - [ ] TODO de mise en prod dans le docker-compose.yaml
-- [x] passage à pydantic-settings
+# Tests
+uv run pytest                  # Tous les tests avec couverture
+uv run pytest -v               # Mode verbose
+uv run pytest -k "test_pattern"  # Tests correspondant au pattern
 
-- [ ] corriger les problèmes de résolution de chemin
-    - [x] calcul dans settings directement
-    - [x] trouver un moyen de gérer proprement les archives
-        - ~~[ ] ajout inner_path_extension au Dataset ?~~
-        - [x] calcul avec `Path(...).with_suffix(...)`
-    - [x] résoudre les incohérences de nommage de fichiers (avant landing garde les mêmes noms que sur le serveur,
-      ce n'est qu'à partir de la couche bronze qu'on renomme avec nos conventions)
-    - [ ] basculer sur une architecture de résolution de chemin découplée du Dataset
-        - [ ] retirer la propriété `storage` du catalogue de données
-        - [ ] ajouter classe PipelinePathResolver (@property landing() → Path...)
-        - [x] ajouter nom du dataset dans sa définition
-        - [ ] uniformiser les chemins entre landing & les autres couches
+# Docker & Airflow
+docker compose up --detach     # Démarrer Airflow
+docker compose logs airflow -f # Suivre les logs
+docker compose down            # Arrêter les services
+```
 
-- [ ] pipeline
-    - [x] passage à 2 DAGs spécifiques (un avec et un sans extraction d'archive)
-    - [x] retirer tâche "landing" qui est juste là pour les XCom ?
-    - ~~[ ] ajouter class PipelineContext qui réduit le nombre de passages d'arguments et centralise l'info~~
-    - [ ] documenter choix des Serializer, des transformations et du déroulement logique du pipeline
-    - [x] créer exemple complet pipeline sans Airflow
-    - [x] cohérence des arguments passés entre chaque tâche
-    - [x] passer tous les arguments nécessaires aux métadonnées
-    - [ ] fail-fast si transformations bronze/silver pas enregistrées
+**Note** : L'installation locale d'Airflow est pour le support IDE uniquement. Airflow réel s'exécute dans Docker.
 
-- [ ] check_should_run doit arriver après contrôle de la cohérence de l'état actuel ? même tâche ?
+Voir aussi :
+
+- [README_DX.md](docs/README_DX.md) - Guide développeur détaillé
+- [AGENTS.md](AGENTS.md) - Guide pour assistants IA
+- [CLAUDE.md](CLAUDE.md) - Guide spécifique Claude Code
+
+## Roadmap
+
+### Phase 1 : Architecture & Versioning
+
+- [x] **PathResolver refactoring** : Architecture découplée sans dépendance circulaire
+- [x] **Bronze versioning** : Historique complet avec rétention automatique (365j)
+- [x] **Silver dual-file pattern** : `current.parquet` + `backup.parquet` pour rollback rapide
+- [x] **IngestionFrequency enrichie** : Génération de versions selon la fréquence
+- [x] **DAG de maintenance** : Nettoyage hebdomadaire des anciennes versions Bronze
+- [ ] **State management**
+    - [ ] documenter le choix actuel du fichier JSON par dataset
+    - [ ] DAG de maintenance ou task de vérification avant chaque DAG d'ingestion ?
     - → check_state
         - → si ok → check_should_run
         - → sinon → heal_state
             - → download_data → ...
 
-- [x] ajout mécanisme pour vérifier la "fraîcheur" des données
-    - [x] requête HEAD si possible
-    - [x] comparaison hash_sha256
+### Phase 2 : Pipeline Robustesse
 
-- [ ] complexité du state management: on gère un système indépendant + celui de Airflow
-    - [ ] vérifier qu'on ne puisse pas tout passer sous Airflow (vérifier sha256 pour sûr, autre chose ?)
+- [ ] **Fail-fast validation** : Vérifier transformations enregistrées au démarrage DAG
+- [ ] **Exceptions personnalisées** : Remplacer `raise Exception` par exceptions métier
+- [ ] **Gestion d'erreurs cohérente** : Stratégie unifiée logging + exceptions, retirer les raise... from e
+- [ ] **Documentation pipeline** : Serializer, transformations, déroulement logique
+- [ ] **CLI tool** : `scripts/inspect_bronze.py` pour debug/maintenance manuelle
 
-- [ ] cohérence de la gestion des exceptions & des logs associés
-    - [ ] choix stratégie (fonctions Pipeline ? tasks ? fonctions bas-niveau ?)
-    - [ ] documentation de la solution choisie
+### Phase 3 : Documentation, Tests & Validation
 
-- [x] cohérence entre ExtractionInfo et ExtractionResult
+- [ ] **Documentation complète** : docs/README_.md
+- [ ] **Tests unitaires** :
+    - [ ] core
+    - [ ] utils
+- [ ] **Tests d'intégration pipeline** : Flux complet Landing → Silver
+- [ ] **Tests transformations** : Validation Bronze → Silver pour tous les datasets
+- [ ] **Test maintenance DAG** : Mock fichiers anciens + vérification nettoyage
+- [ ] **Objectif couverture** : 9% → 60%+
 
-- [x] normalement OK d'utiliser short_circuit même sans renvoyer explicitement `True` car le dictionnaire suivant ne
-  sera (jamais ?) interprété à `False`. Idem pour la tâche download_and_check_hash_task
-- [ ] documenter le comportement ci-dessus
+### Phase 4 : Transformations & Qualité
 
-- [ ] transformations silver
-    - [ ] data quality (GX ou Soda Core ou autre librairie ?)
+- [ ] **Transformations Bronze** : Typage Parquet, renommage systématique des colonnes
+- [ ] **Transformations Silver** : Data quality (Great Expectations / Soda Core)
+    - [ ] Normalisation types et unités
+    - [ ] Détection données aberrantes
+    - [ ] Validation schémas
+- [ ] **Mode incrémental** : Support datasets à mise à jour différentielle
 
-## Priorité 2
+### Phase 5 : Production & Observabilité
 
-- [ ] résoudre bug affichage des logs dans airflow pour le niveau DEBUG
+- [ ] **Déploiement Docker** : Finaliser `docker-compose.yaml` pour production
+- [ ] **Améliorations Airflow** :
+    - [ ] Parallélisation avec `@task.map`
+    - [ ] Cleanup avec @setup & @teardown
+- [ ] **OpenTelemetry** : Traces distribuées + métriques
+- [ ] **Alerts & SLA** : Monitoring qualité + latence
+- [ ] **Open Lineage** : Traçabilité données end-to-end
+- [ ] **Optimisations** :
+    - [ ] Compression Parquet (zstd)
+    - [ ] Incremental loading
+    - [ ] Éviter relecture dataframes entre bronze & silver
 
-- [ ] comment gérer l'erreur de génération d'assets proprement dans Airflow si une erreur arrive durant le parsing
-  des DAGS ?
+### Bugs Connus
 
-- [ ] ajout transformations de base silver
-    - [ ] normaliser (types, unités)
-    - [ ] cohérence générale (pas de données aberrantes)
-- [ ] valider par de la data quality les couches bronze & silver
+- [ ] Logs DEBUG invisibles dans Airflow UI
+- [ ] Erreur génération assets non capturée proprement lors parsing DAGs
 
-- [ ] ajout du mode incrémental ?
+### Idées Futures
 
-## Priorité 3
-
-- [ ] modifier les raise ... from e
-
-- ~~[ ] ajout d'un type pour le nom des layers (StrEnum)~~
-
-- [ ] mettre en place politique de rétention pour la couche bronze
-- [ ] ajout des documentations des données avec les anciens fichiers
-- [ ] regarder @setup & @teardown pour le cleanup Airflow
-
-- [ ] tests/
-    - [ ] test_logger
-        - [ ] vérifier la redirection vers Airflow
-        - [ ] vérifier que passer un objet non mutable à la méthode _format_extra ne change rien
-    - [ ] tester au moins les fonctions critiques
-        - [ ] download, extract, transformations
-
-### Priorité 4
-
-- [ ] ajouter Observabilité/SLA/Alerts/OpenTelemetry
-- [ ] ajout métrique de performances
-- [ ] [ajouter configuration Open Lineage](https://airflow.apache.org/docs/apache-airflow-providers-openlineage/stable/guides/user.html)
-- [ ] si besoin de paralléliser, regarder @task.map
-- [ ] si besoin d'améliorer perfs, faire du incremental loading pour les datasets, compresser les parquets avec zstd
-- [ ] potentiel problème de performances pour la lecture des dataframes (à documenter, pour l'instant cohérence
-  bronze/silver lors du passage des arguments aux fonctions de transformations). Puisqu'on change de tâche entre
-  bronze & silver, on doit relire à nouveau le même dataframe.
+- [ ] Couche **Gold** : Agrégations cross-datasets pour analytics
+- [ ] **Data catalog web UI** : Interface pour explorer datasets/versions
+- [ ] **Rollback automatisé** : Détection anomalies → rollback Silver sans intervention
+- [ ] **Archivage long terme** : Export Bronze vers S3 Glacier après rétention

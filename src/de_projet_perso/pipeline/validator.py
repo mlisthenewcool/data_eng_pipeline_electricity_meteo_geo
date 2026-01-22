@@ -59,7 +59,7 @@ class PipelineValidator:
         """
         state = PipelineStateManager.load(dataset.name)
         resolver = PathResolver(dataset.name)
-        expected_path = resolver.silver_current_path()
+        expected_path = resolver.silver_current_path
 
         result = ValidationResult(
             dataset=dataset.name,

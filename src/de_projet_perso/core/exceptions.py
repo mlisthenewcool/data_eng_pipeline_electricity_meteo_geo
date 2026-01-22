@@ -2,12 +2,68 @@
 
 This module defines domain-specific exceptions that provide clear error messages
 and structured error information for debugging and error handling.
+
+All exceptions inherit from BaseProjectException to support automatic attribute
+extraction for structured logging via to_dict().
 """
 
 from pathlib import Path
+from typing import Any
 
 
-class DownloadError(Exception):
+class BaseProjectException(Exception):
+    """Base exception for all custom exceptions in this project.
+
+    This base class provides automatic attribute extraction via to_dict()
+    for structured logging. All exception attributes (except private ones
+    starting with '_') are automatically included in logs.
+
+    Subclasses should:
+    1. Call super().__init__(message) with a clear error message
+    2. Set instance attributes for contextual information
+    3. Optionally override to_dict() to customize logged fields
+
+    Attributes are automatically extracted for logging, no need to override
+    to_dict() in most cases.
+    """
+
+    def to_dict(self) -> dict[str, Any]:
+        """Extract exception attributes as dict for structured logging.
+
+        Returns a dictionary of all public attributes (not starting with '_'),
+        converting Path objects to strings for better logging.
+
+        Returns:
+            Dictionary of exception attributes suitable for logger extra={}.
+
+        Note:
+            Override this method if you need custom behavior (e.g., skip large objects,
+            format complex types, add computed fields).
+        """
+        result: dict[str, Any] = {}
+
+        for key, value in self.__dict__.items():
+            # Skip private attributes
+            if key.startswith("_"):
+                continue
+
+            # Convert Path to string for better logging
+            if isinstance(value, Path):
+                result[key] = str(value)
+            # Skip complex non-serializable objects (basic safety check)
+            elif isinstance(value, (str, int, float, bool, type(None))):
+                result[key] = value
+            elif isinstance(value, (list, dict, tuple)):
+                # Assume collections contain simple types (or override to_dict if not)
+                result[key] = value
+            else:
+                # For other types, use class name as placeholder
+                result[key] = f"<{type(value).__name__}>"
+
+        return result
+
+
+class DownloadError(BaseProjectException):
     """Base exception for download-related failures."""
 
 
@@ -58,7 +114,7 @@ class RetryExhaustedError(DownloadError):
         return f"{error_name}: {error_str}" if error_str else error_name
 
 
-class ExtractionError(Exception):
+class ExtractionError(BaseProjectException):
     """Base exception for archive extraction failures."""
 
 
@@ -99,24 +155,7 @@ class FileNotFoundInArchiveError(ExtractionError):
         super().__init__(f"File {target_filename} not found in archive: {archive_path.name}")
 
 
-# class FileShouldNotExist(Exception):
-#     """Raised when a file exists but the operation requires it to be absent.
-#
-#     Attributes:
-#         path: Path to the file that already exists.
-#     """
-#
-#     def __init__(self, path: Path) -> None:
-#         """Initializes the error with the conflicting file path.
-#
-#         Args:
-#             path: Path to the file that already exists.
-#         """
-#         self.path = path
-#         super().__init__(f"File {self.path} already exists but shouldn't.")
-
-
-class FileIntegrityError(Exception):
+class FileIntegrityError(BaseProjectException):
     """Raised when file validation (hash, size, etc.) fails.
 
     Attributes:
@@ -136,7 +175,7 @@ class FileIntegrityError(Exception):
         super().__init__(f"File integrity check failed for {path.name}: {reason}")
 
 
-class DataCatalogError(Exception):
+class DataCatalogError(BaseProjectException):
     """Base exception for data catalog related failures."""
 
 
@@ -182,7 +221,51 @@ class DatasetNotFoundError(DataCatalogError):
         """
         self.name = name
         self.available_datasets = available_datasets
-        super().__init__(
-            f"Dataset {name} does not exist in data catalog. "
-            f"Available datasets: {available_datasets}"
-        )
+        super().__init__("Dataset does not exist in data catalog")
+
+
+class PlatformError(BaseProjectException):
+    """Base exception for platform related failures."""
+
+
+class AirflowContextError(PlatformError):
+    """Raised when code is executed in the wrong Airflow context.
+
+    This exception is raised when:
+    - Airflow-only code is executed outside Airflow (e.g., in scripts)
+    - Non-Airflow code is executed inside Airflow (e.g., runtime generation)
+
+    Attributes:
+        operation: Name of the operation that failed
+        expected_context: Where the code should be executed ("airflow" or "non-airflow")
+        actual_context: Where the code is actually running
+        suggestion: Alternative method or approach to use
+
+    Example:
+        Check Airflow context before executing:
+
+            from de_projet_perso.core.settings import settings
+
+            if not settings.is_running_on_airflow:
+                raise AirflowContextError(
+                    "get_airflow_version_template() requires Airflow context. "
+                    "Use format_datetime_as_version() instead"
+                )
+    """
+
+    def __init__(
+        self, operation: str, expected_context: str, actual_context: str, suggestion: str | None
+    ) -> None:
+        """Initializes the error with context information.
+
+        Args:
+            operation: Name of the operation (e.g., "get_airflow_version_template")
+            expected_context: Where code should run ("airflow" or "non-airflow")
+            actual_context: Where code is running ("airflow" or "non-airflow")
+            suggestion: Optional alternative method to use
+        """
+        self.operation = operation
+        self.expected_context = expected_context
+        self.actual_context = actual_context
+        self.suggestion = suggestion
+        super().__init__("Code is executed on the wrong context")

@@ -19,6 +19,7 @@ from de_projet_perso.core.data_catalog import DataCatalog, Dataset
 from de_projet_perso.core.exceptions import InvalidCatalogError
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.settings import settings
+from de_projet_perso.pipeline.manager import PipelineManager
 
 
 def _should_use_archive_dag(dataset: Dataset) -> bool:
@@ -52,13 +53,15 @@ def _generate_all_dags() -> dict[str, DAG]:
         try:
             asset = _create_asset_for_dataset(dataset)
 
+            manager = PipelineManager(dataset)
+
             # TODO: injecter directement la fonction si plus de types de DAGs
             if _should_use_archive_dag(dataset):
                 dag_id = f"dag_archive_{name}"
-                dag_obj = create_archive_dag(dataset, asset)
+                dag_obj = create_archive_dag(manager, asset)
             else:
                 dag_id = f"dag_simple_{name}"
-                dag_obj = create_simple_dag(dataset, asset)
+                dag_obj = create_simple_dag(manager, asset)
 
             pipelines[name] = dag_obj
             logger.info(f"Created dataset DAG: {dag_id}")

@@ -31,7 +31,7 @@ Attributes:
 import logging
 import re
 import sys
-from typing import TYPE_CHECKING, Any, Optional, Pattern, TypeGuard
+from typing import TYPE_CHECKING, Any, Callable, Optional, Pattern, TypeGuard
 
 from loguru import logger as _loguru_logger
 
@@ -80,7 +80,7 @@ _ANSI_PATTERN: Pattern[str] = re.compile(r"\033\[[0-9;]*m")
 _INDENT = 22 if _ON_AIRFLOW else 20
 _INDENT_INCREASE_PER_LEVEL = 4
 
-_SEPARATOR = " => "
+_SEPARATOR = " → "
 
 # Log formats: Airflow format is simplified since it already shows time & context
 _FORMAT_TERMINAL = (
@@ -179,7 +179,7 @@ def _format_value_recursive(value: Any, level: int) -> str:
 
     # Empty dict representation
     if not value:
-        return "{?}"
+        return "{}"
 
     line_prefix = _compute_prefix(level=level)
 
@@ -418,6 +418,34 @@ class LoguruLogger:
             This method is intended for testing only. Do not use in production.
         """
         cls._instance = None
+
+
+class TqdmToLoguru:
+    """Standard output proxy for tqdm to Loguru redirection.
+
+    Acts as a file-like object that intercepts tqdm progress strings and
+    forwards them to a specified Loguru logging function instead of sys.stderr.
+    """
+
+    def __init__(self, logger_func: Callable):
+        """Initialize the proxy object."""
+        self.logger_func = logger_func
+        self.buf = ""
+
+    def write(self, buf: str) -> None:
+        """Clean and forward the tqdm buffer to the logger.
+
+        Args:
+            buf: Raw string buffer received from tqdm, often containing
+                 control characters like carriage returns.
+        """
+        # tqdm envoie souvent des segments de texte avec \r
+        self.buf = buf.strip("\r\n\t ")
+        if self.buf:
+            self.logger_func(self.buf)
+
+    # def flush(self):  # noqa: D102
+    #     pass
 
 
 logger = LoguruLogger(level=settings.logging_level)

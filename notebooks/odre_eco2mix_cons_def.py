@@ -23,7 +23,7 @@ def _(DataCatalog, settings):
 
 @app.cell
 def _(dataset, pl):
-    df = pl.read_parquet(dataset.get_bronze_path())
+    df = pl.read_parquet(dataset.bronze_path())
     return (df,)
 
 
