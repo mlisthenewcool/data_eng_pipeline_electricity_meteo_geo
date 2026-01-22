@@ -8,7 +8,7 @@
 - [x] **IngestionFrequency enrichie** : Génération de versions selon la fréquence
 - [ ] **DAG de maintenance** : Nettoyage hebdomadaire des anciennes versions Bronze
 - [ ] **State management**
-    - [ ] Documenter le choix actuel du fichier JSON par dataset
+    - [x] Documenter le choix actuel du fichier JSON par dataset
     - [ ] DAG ou task de vérification avant chaque DAG d'ingestion ?
     - → check_state
         - → si ok → check_should_run
@@ -31,7 +31,6 @@
 - [ ] **Documentation pipeline** : Serializer, transformations, déroulement logique
 - [ ] **CLI tool** : `scripts/inspect_bronze.py` pour debug/maintenance manuelle
 - [ ] Après ajout de nouvelles transformations silver, ne relancer que ça par exemple, par l'intégralité du DAG
-- [ ] 
 
 ## Phase 3 : Transformations & Qualité
 
@@ -45,9 +44,9 @@
 ## Phase 4 : Documentation, Tests & Validation
 
 - [ ] **Documentation complète** : docs/README_.md
-  - [ ] Ajouter screenshots Airflow
-  - [ ] Schéma des liens entre datasets
-  - [ ] Vue visuelle des layers plutôt que textuelle
+    - [ ] Ajouter screenshots Airflow
+    - [ ] Schéma des liens entre datasets
+    - [ ] Vue visuelle des layers plutôt que textuelle
 - [ ] **Tests unitaires** :
     - [ ] core
     - [ ] utils
