@@ -553,23 +553,21 @@ if __name__ == "__main__":
     try:
         _catalog = DataCatalog.load(settings.data_catalog_file_path)
     except InvalidCatalogError as e:
-        logger.exception(message=str(e), extra=e.validation_errors)
+        logger.exception(str(e), extra=e.validation_errors)
         sys.exit(1)
 
-    logger.info(message=f"Catalog loaded: found {len(_catalog.datasets)} dataset(s)")
+    logger.info(f"Catalog loaded: found {len(_catalog.datasets)} dataset(s)")
 
     for _name, _dataset in _catalog.datasets.items():
-        logger.info(
-            message=f"dataset: {_name}",
-            extra=_dataset.model_dump(),
-            # extra={
-            #     "name": _dataset.name,
-            #     "description": _dataset.description,
-            #     "provider": _dataset.source.provider,
-            #     "url": _dataset.source.url_as_str,
-            #     "format": _dataset.source.format.value,
-            #     "frequency": _dataset.ingestion.frequency.value,
-            #     "mode": _dataset.ingestion.mode.value,
-            #     "airflow_schedule": _dataset.ingestion.frequency.airflow_schedule,
-            # },
-        )
+        logger.info(f"dataset: {_name}", extra=_dataset.model_dump())
+
+    # extra={
+    #     "name": _dataset.name,
+    #     "description": _dataset.description,
+    #     "provider": _dataset.source.provider,
+    #     "url": _dataset.source.url_as_str,
+    #     "format": _dataset.source.format.value,
+    #     "frequency": _dataset.ingestion.frequency.value,
+    #     "mode": _dataset.ingestion.mode.value,
+    #     "airflow_schedule": _dataset.ingestion.frequency.airflow_schedule,
+    # }

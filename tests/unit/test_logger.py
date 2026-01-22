@@ -52,12 +52,12 @@ class TestLoguruLogger:
         try:
             raise ValueError("test error")
         except ValueError:
-            adapter.exception(message="caught", extra={"ctx": "test"})
+            adapter.exception("caught", extra={"ctx": "test"})
         assert "ValueError" in capsys.readouterr().err
 
     def test_exception_without_active_exception(self, capsys: pytest.CaptureFixture) -> None:
         """exception() adds warning when called outside handler."""
-        LoguruLogger(level="DEBUG").exception(message="no exception")
+        LoguruLogger(level="DEBUG").exception("no exception")
         output = capsys.readouterr().err
         assert "no exception" in output
         assert "You called logger.exception() with no active exception" in output
@@ -175,4 +175,4 @@ class TestModuleExport:
     def test_logger_exported_and_functional(self) -> None:
         """Module exports a functional LoguruLogger instance."""
         assert isinstance(logger, LoguruLogger)
-        logger.debug(message="test", extra={"x": 1})  # Should not raise
+        logger.debug("test", extra={"x": 1})  # Should not raise

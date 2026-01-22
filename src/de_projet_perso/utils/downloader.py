@@ -120,7 +120,7 @@ def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadRes
         ... # File saved to: /data/landing/ign_contours_iris/CONTOURS-IRIS_3-0...7z
         ... print(f"Downloaded {result.original_filename}: {result.size_mib} MiB")
     """
-    logger.debug("Starting download", extra={"url": url, "dest_dir": str(dest_dir)})
+    logger.debug("Starting download", extra={"url": url, "dest_dir": dest_dir})
 
     # TODO, documenter & ajouter arguments write/pool
     timeout = httpx.Timeout(
@@ -145,10 +145,7 @@ def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadRes
             dest_path = dest_dir / original_filename
 
             if dest_path.exists():
-                logger.warning(
-                    message="File already exists",
-                    extra={"url": url, "path": str(dest_path)},
-                )
+                logger.warning("File already exists", extra={"url": url, "path": dest_path})
 
             dest_path.parent.mkdir(parents=True, exist_ok=True)
             total_bytes = 0
@@ -182,7 +179,7 @@ def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadRes
             logger.debug(
                 "Download completed",
                 extra={
-                    "path": str(dest_path),
+                    "path": dest_path,
                     "original_filename": original_filename,
                     "size_mib": round(total_bytes / (1024**2), 2),
                     "sha256": sha256_result,

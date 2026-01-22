@@ -240,6 +240,12 @@ Voir aussi :
         - → si ok → check_should_run
         - → sinon → heal_state
             - → download_data → ...
+    - [ ] gérer les cas où les fichiers `_state` et/ou les versions bronze ont été supprimées
+    - [ ] est-ce utile en l'état d'avoir un champ `history` dans `_state` ?
+- [ ] **Datasets incrémentaux** :
+    - [ ] passer par API et ne récupérer que les nouvelles données ?
+    - [ ] eco2mix : def (une seule fois), cons (une fois par jour), tr (une fois par heure)
+    - [ ] meteo_observations & meteo_climatologie
 
 ### Phase 2 : Pipeline Robustesse
 
@@ -250,6 +256,7 @@ Voir aussi :
 - [ ] **Gestion d'erreurs cohérente** : Stratégie unifiée logging + exceptions, retirer les raise... from e
 - [ ] **Documentation pipeline** : Serializer, transformations, déroulement logique
 - [ ] **CLI tool** : `scripts/inspect_bronze.py` pour debug/maintenance manuelle
+- [ ] Après ajout de nouvelles transformations silver, ne relancer que ça par exemple, par l'intégralité du DAG
 
 ### Phase 3 : Transformations & Qualité
 

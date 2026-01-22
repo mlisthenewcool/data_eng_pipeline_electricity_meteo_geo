@@ -216,7 +216,7 @@ def extract_7z(
             logger.debug(
                 "Extraction completed",
                 extra={
-                    "path": str(dest_path),
+                    "path": dest_path,
                     "size_mib": size_mib,
                     "sha256": extracted_file_hash,
                 },

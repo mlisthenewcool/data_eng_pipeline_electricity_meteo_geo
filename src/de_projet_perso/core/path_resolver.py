@@ -215,7 +215,7 @@ if __name__ == "__main__":
     try:
         _catalog = DataCatalog.load(settings.data_catalog_file_path)
     except InvalidCatalogError as e:
-        logger.exception(message=str(e), extra=e.validation_errors)
+        logger.exception(str(e), extra=e.validation_errors)
         sys.exit(-1)
 
     for _name, _dataset in _catalog.datasets.items():
@@ -225,14 +225,14 @@ if __name__ == "__main__":
         _resolver = PathResolver(dataset_name=_dataset.name)
 
         logger.info(
-            message=f"dataset → {_name}",
+            f"dataset → {_name}",
             extra={
                 "dataset": _dataset.model_dump(),
                 "run_version": _run_version,
-                "landing_dir": str(_resolver.landing_dir),
-                f"bronze_path ('{_run_version}')": str(_resolver.bronze_path(_run_version)),
-                "bronze_latest_path": str(_resolver.bronze_latest_path),
+                "landing_dir": _resolver.landing_dir,
+                f"bronze_path ('{_run_version}')": _resolver.bronze_path(_run_version),
+                "bronze_latest_path": _resolver.bronze_latest_path,
                 "bronze_latest_version": _resolver.bronze_latest_version(),
-                "silver_current_path": str(_resolver.silver_current_path),
+                "silver_current_path": _resolver.silver_current_path,
             },
         )

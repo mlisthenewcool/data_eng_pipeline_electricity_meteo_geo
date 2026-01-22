@@ -66,7 +66,7 @@ class FileManager:
                 extra={
                     "dataset_name": self.resolver.dataset_name,
                     "target_version": target_version,
-                    "symlink": str(latest_link),
+                    "symlink": latest_link,
                     "target": relative_target,
                 },
             )

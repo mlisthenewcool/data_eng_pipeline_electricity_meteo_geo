@@ -6,23 +6,27 @@ based on the execution environment:
 - **Terminal**: Colored output with timestamps and structured extra fields
 - **Airflow**: Plain text routed to Airflow's task logger for UI integration
 
-The logger supports the standard library's ``extra={}`` pattern for structured
-logging, making it easy to add context to log messages.
+Features:
+    - Supports the standard library's ``extra={}`` pattern for structured context.
+    - **Automatic Stringification**: Thanks to internal sanitization, objects
+      implementing ``__str__`` (like ``pathlib.Path``) are automatically
+      converted to strings. There is no need to wrap them in ``str()`` manually.
+    - **ANSI Safety**: Strips ANSI escape codes from input data to prevent log
+      injection and keep logs clean.
 
 Example:
-    Basic usage with structured context::
+    Basic usage with structured context:
 
-        from de_projet_perso.core.logger import logger
+        >>> from de_projet_perso.core.logger import logger # noqa
+        ... logger.info("Download started", extra={"url": "https://example.com", "size": 1024})
+        ... logger.error("Failed to connect", extra={"attempt": 3, "max_retries": 5})
 
-        logger.info("Download started", extra={"url": "https://example.com", "size": 1024})
-        logger.error("Failed to connect", extra={"attempt": 3, "max_retries": 5})
+    Exception logging:
 
-    Exception logging::
-
-        try:
-            risky_operation()
-        except Exception:
-            logger.exception("Operation failed", extra={"context": "pipeline"})
+        >>> try:
+        ...    risky_operation() # noqa
+        ... except Exception: # noqa
+        ...    logger.exception("Operation failed", extra={"context": "pipeline"})
 
 Attributes:
     logger: Pre-configured singleton logger instance ready for use.
@@ -133,7 +137,7 @@ def _safe_str(value: Any) -> str:
     """
     try:
         return _strip_ansi(text=str(value))
-    except Exception:
+    except Exception:  # noqa
         return "<REPR_ERROR>"
 
 
@@ -269,8 +273,8 @@ class LoguruLogger:
         _logger: Configured Loguru logger with patched formatter.
 
     Example:
-        >>> logger = LoguruLogger(level="INFO")
-        >>> logger.info("Hello", extra={"user": "alice"})
+        >>> _logger = LoguruLogger(level="INFO")
+        >>> _logger.info("Hello", extra={"user": "alice"})
         12:34:56 | INFO     | Hello
                             └─ user => alice
     """
@@ -325,68 +329,70 @@ class LoguruLogger:
 
         self._logger = patched
 
-    def _log(self, level: str, message: str, **kwargs: Any) -> None:
+    def _log(
+        self, level: str, message: str, extra: dict[str, Any] | None = None, exc_info: bool = False
+    ) -> None:
         """Internal method that handles extra={} conversion to Loguru's bind().
 
         Args:
             level: Log level name (debug, info, warning, error, critical).
             message: The log message.
-            **kwargs: Optional ``extra`` dict and ``exc_info`` bool.
+            extra: Optional structured context dictionary.
+            exc_info: Whether the exception should be logged or not (use only inside try/except).
         """
-        extra: dict[str, Any] = kwargs.pop("extra", {}) or {}
-        exc_info: bool = kwargs.pop("exc_info", False)
+        log_extra = extra or {}
 
-        bound = self._logger.bind(**extra)
+        bound = self._logger.bind(**log_extra)
         # depth=2 is required so Loguru correctly identifies the caller's
         # filename and line number, skipping the _log() and info/debug() wrappers.
         getattr(bound.opt(depth=2, exception=exc_info), level)(message)
 
-    def debug(self, message: str, **kwargs: Any) -> None:
+    def debug(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
         """Log a debug message.
 
         Args:
             message: The log message.
-            **kwargs: Optional ``extra`` dict for structured context.
+            extra: Optional structured context dictionary.
         """
-        self._log("debug", message, **kwargs)
+        self._log("debug", message, extra)
 
-    def info(self, message: str, **kwargs: Any) -> None:
+    def info(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
         """Log an info message.
 
         Args:
             message: The log message.
-            **kwargs: Optional ``extra`` dict for structured context.
+            extra: Optional structured context dictionary.
         """
-        self._log("info", message, **kwargs)
+        self._log("info", message, extra)
 
-    def warning(self, message: str, **kwargs: Any) -> None:
+    def warning(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
         """Log a warning message.
 
         Args:
             message: The log message.
-            **kwargs: Optional ``extra`` dict for structured context.
+            extra: Optional structured context dictionary.
         """
-        self._log("warning", message, **kwargs)
+        self._log("warning", message, extra)
 
-    def error(self, message: str, **kwargs: Any) -> None:
+    def error(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
         """Log an error message.
 
         Args:
             message: The log message.
-            **kwargs: Optional ``extra`` dict for structured context.
+            extra: Optional structured context dictionary.
         """
-        self._log("error", message, **kwargs)
+        self._log("error", message, extra)
 
-    def critical(self, message: str, **kwargs: Any) -> None:
+    def critical(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
         """Log a critical message.
 
         Args:
             message: The log message.
-            **kwargs: Optional ``extra`` dict for structured context.
+            extra: Optional structured context dictionary.
         """
-        self._log("critical", message, **kwargs)
+        self._log("critical", message, extra)
 
-    def exception(self, message: str, **kwargs: Any) -> None:
+    def exception(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
         """Log an error message with exception traceback.
 
         Should be called from within an exception handler. If called without
@@ -394,7 +400,7 @@ class LoguruLogger:
 
         Args:
             message: The log message.
-            **kwargs: Optional keyword arguments. Supports ``extra`` dict for structured context.
+            extra: Optional structured context dictionary.
 
         Example:
             >>> try:
@@ -403,12 +409,12 @@ class LoguruLogger:
             ...     logger.exception("Failed", extra={"input": "extra information"})
         """
         if sys.exc_info()[0] is None:
-            extra: dict[str, Any] = kwargs.setdefault("extra", {})
-            extra["warning"] = "You called logger.exception() with no active exception"
-            kwargs["exc_info"] = False
+            extra = extra or {}
+            extra["warning"] = "You called logger.exception() with no active exception."
+            exc_info = False
         else:
-            kwargs["exc_info"] = True
-        self._log("error", message, **kwargs)
+            exc_info = True
+        self._log("error", message, extra, exc_info)
 
     @classmethod
     def _reset(cls) -> None:
@@ -439,45 +445,39 @@ class TqdmToLoguru:
             buf: Raw string buffer received from tqdm, often containing
                  control characters like carriage returns.
         """
-        # tqdm envoie souvent des segments de texte avec \r
         self.buf = buf.strip("\r\n\t ")
         if self.buf:
             self.logger_func(self.buf)
-
-    # def flush(self):  # noqa: D102
-    #     pass
 
 
 logger = LoguruLogger(level=settings.logging_level)
 
 
-def __test_logs_visually() -> None:  # pragma: no cover
-    """Visual test for logger output across all levels and edge cases.
+if __name__ == "__main__":
+    from pathlib import Path
 
-    Run with: ``PYTHONPATH=src uv run python -m de_projet_perso.core.logger``
-    """
     extras = {"status": "working", "user_id": 42}
 
-    logger.debug(message="Debug message", extra=extras)
-    logger.info(message="Info message", extra=extras)
-    logger.warning(message="Warning message", extra=extras)
-    logger.error(message="Error message", extra=extras)
-    logger.critical(message="Critical message", extra=extras)
+    logger.debug("Debug message", extra=extras)
+    logger.info("Info message", extra=extras)
+    logger.warning("Warning message", extra=extras)
+    logger.error("Error message", extra=extras)
+    logger.critical("Critical message", extra=extras)
 
-    logger.info(message="Message without extras")
+    logger.info("Message without extras")
+
+    # Thanks to `_safe_str(...)`, objects with __str__ method implemented use it automatically
+    path = Path(__file__).name
+    logger.info(f"Message with path {path}", extra={"path": path})
 
     # ANSI injection test - codes should be stripped
-    logger.info(message="ANSI test", extra={"\x1b[1;31mred as key": "\033[1;31mred as value"})
+    logger.info("ANSI test", extra={"\x1b[1;31mred as key": "\033[1;31mred as value"})
 
-    logger.exception(message="No active exception")
+    logger.exception("No active exception")
 
     try:
         _ = 1 / 0
     except ZeroDivisionError:
-        logger.exception(message="Division error", extra={"context": "test"})
+        logger.exception("Division error", extra={"context": "test"})
 
-    logger.info(message="After exception")
-
-
-if __name__ == "__main__":
-    __test_logs_visually()
+    logger.info("After exception")
