@@ -14,20 +14,15 @@ Example:
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import Callable
 
 import polars as pl
 
-from de_projet_perso.core.data_catalog import Dataset
+# Bronze transforms receive the landing file path
+BronzeTransformFunc = Callable[[Path], pl.DataFrame]
 
-if TYPE_CHECKING:
-    from de_projet_perso.core.path_resolver import PathResolver
-
-# Bronze transforms receive the landing file path explicitly
-BronzeTransformFunc = Callable[[Dataset, Path], pl.DataFrame]
-
-# Silver transforms receive dataset and PathResolver
-SilverTransformFunc = Callable[[Dataset, "PathResolver"], pl.DataFrame]
+# Silver transforms receive latest bronze path
+SilverTransformFunc = Callable[[Path], pl.DataFrame]
 
 # Legacy type alias for backward compatibility
 TransformFunction = BronzeTransformFunc
@@ -113,6 +108,7 @@ def get_silver_transform(dataset_name: str) -> SilverTransformFunc | None:
     return _SILVER_TRANSFORMS.get(dataset_name)
 
 
+# TODO: fast-fail
 # Import all transformation modules to trigger registration
 # Add new transformation modules here as you create them
 try:
@@ -120,6 +116,7 @@ try:
         ign_contours_iris,
         meteo_france_stations,
         odre_eco2mix_cons_def,
+        odre_eco2mix_tr,
         odre_installations,
     )
 except ImportError as e:

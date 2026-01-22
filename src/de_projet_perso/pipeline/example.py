@@ -162,7 +162,7 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to silver layer...")
     logger.info("=" * 80)
-    _silver = _manager.to_silver(bronze_result=_bronze)
+    _silver = _manager.to_silver()
 
     logger.info("Silver transformation completed !", extra=_silver.to_serializable())
 
@@ -174,7 +174,6 @@ if __name__ == "__main__":
     # ==============================
     # Step 6: Save successful run metadata
     # ==============================
-    # TODO, pas descendu entre les tâches actuellement donc Airflow ne pourra pas les utiliser
     if not _extraction:
         sha256 = _download.sha256
         file_size_mib = _download.size_mib

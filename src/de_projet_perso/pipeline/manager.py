@@ -56,8 +56,7 @@ class PipelineManager:
 
     dataset: Dataset
 
-    @classmethod
-    def has_dataset_metadata_changed(cls) -> CheckMetadataResult:
+    def has_dataset_metadata_changed(self) -> CheckMetadataResult:
         """Check if remote file has changed using HTTP HEAD (Smart Skip #1).
 
         This performs HTTP HEAD request to fetch ETag, Last-Modified, and
@@ -75,16 +74,16 @@ class PipelineManager:
         """
         # 1. Fetch remote metadata
         remote_info = get_remote_file_info(
-            url=cls.dataset.source.url_as_str,
+            url=self.dataset.source.url_as_str,
             timeout=30,  # TODO: mettre dans setting. 30 seconds for HTTP HEAD
         )
 
         # 2. Load previous state
-        state = PipelineStateManager.load(cls.dataset.name)
+        state = PipelineStateManager.load(self.dataset.name)
 
         # 3. FIRST_RUN: No previous state
         if state is None or state.last_successful_run is None:
-            logger.info(f"No previous successful run found for {cls.dataset.name}, will run")
+            logger.info(f"No previous successful run found for {self.dataset.name}, will run")
 
             return CheckMetadataResult(
                 action=PipelineAction.FIRST_RUN,
@@ -94,7 +93,7 @@ class PipelineManager:
         # 4. Extract previous remote metadata from download stage
         if not state.last_successful_run:
             # TODO: traiter comme une erreur ici ? ou considérer comme FIRST_RUN ?
-            logger.error(f"No successful run found for {cls.dataset.name}, treating as first run")
+            logger.error(f"No successful run found for {self.dataset.name}, treating as first run")
             raise Exception  # TODO: erreur spécifique à créer
 
         previous_remote = RemoteFileInfo(
@@ -109,7 +108,7 @@ class PipelineManager:
         # SKIP: Remote unchanged
         if not changed_result.has_changed:
             logger.info(
-                f"Pipeline skipped for {cls.dataset.name}: remote unchanged",
+                f"Pipeline skipped for {self.dataset.name}: remote unchanged",
                 extra={
                     "reason": changed_result.reason,
                     "etag": remote_info.etag,
@@ -125,7 +124,7 @@ class PipelineManager:
 
         # REFRESH: Remote changed
         logger.info(
-            f"Pipeline will execute for {cls.dataset.name}: remote changed",
+            f"Pipeline will execute for {self.dataset.name}: remote changed",
             extra={
                 "reason": changed_result.reason,
                 "action": PipelineAction.REFRESH.value,
@@ -140,8 +139,7 @@ class PipelineManager:
             remote_file_metadata=remote_info,
         )
 
-    @classmethod
-    def download(cls, version: str) -> DownloadResult:
+    def download(self, version: str) -> DownloadResult:
         """Download source file from URL.
 
         Downloads to landing directory preserving original filename from server.
@@ -154,16 +152,15 @@ class PipelineManager:
             DownloadResult with path, sha256, size, and original_filename
         """
         # Get landing directory (not file path - preserves original filename)
-        resolver = PathResolver(dataset_name=cls.dataset.name)
+        resolver = PathResolver(dataset_name=self.dataset.name)
 
         return download_to_file(
-            url=cls.dataset.source.url_as_str,
+            url=self.dataset.source.url_as_str,
             dest_dir=resolver.landing_dir,
-            default_name=f"{version}.{cls.dataset.source.format.value}",
+            default_name=f"{version}.{self.dataset.source.format.value}",
         )
 
-    @classmethod
-    def extract_archive(cls, archive_path: Path) -> ExtractionResult:
+    def extract_archive(self, archive_path: Path) -> ExtractionResult:
         """Extract archive and recalculate SHA256.
 
         For archive formats (7z):
@@ -181,23 +178,25 @@ class PipelineManager:
             ValueError: If archive format requires inner_file but none specified
             FileNotFoundError: If extracted file doesn't exist after extraction
         """
-        if not cls.dataset.source.format.is_archive:
+        if not self.dataset.source.format.is_archive:
             logger.warning(
-                f"Trying to extract a non-archive format: {cls.dataset.source.format.value}"
+                f"Trying to extract a non-archive format: {self.dataset.source.format.value}"
             )
             raise Exception  # TODO exception spécifique
 
-        if cls.dataset.source.inner_file is None:
-            raise ValueError(f"inner_file required for archive format: {cls.dataset.source.format}")
+        if self.dataset.source.inner_file is None:
+            raise ValueError(
+                f"inner_file required for archive format: {self.dataset.source.format}"
+            )
 
         # Extract to same directory as archive (preserves directory structure)
         landing_dir = archive_path.parent
 
         file_info = extract_7z(
             archive_path=archive_path,
-            target_filename=cls.dataset.source.inner_file,
+            target_filename=self.dataset.source.inner_file,
             dest_dir=landing_dir,
-            validate_sqlite=Path(cls.dataset.source.inner_file).suffix == ".gpkg",
+            validate_sqlite=Path(self.dataset.source.inner_file).suffix == ".gpkg",
         )
 
         logger.info(
@@ -217,9 +216,8 @@ class PipelineManager:
             size_mib=file_info.size_mib,
         )
 
-    @classmethod
     def has_hash_changed(
-        cls, download_or_extract_result: DownloadResult | ExtractionResult
+        self, download_or_extract_result: DownloadResult | ExtractionResult
     ) -> bool:
         """Download file and check if SHA256 has changed (Smart Skip #2).
 
@@ -237,10 +235,10 @@ class PipelineManager:
         """
         # TODO: passer seulement le hash en paramètre et laisser la task Airflow nettoyer les
         #  fichiers car il serait mieux de séparer les deux DAGs
-        state = PipelineStateManager.load(cls.dataset.name)
+        state = PipelineStateManager.load(self.dataset.name)
 
         if not state or not state.last_successful_run:
-            logger.info(f"Could not find a previous successful run for {cls.dataset.name}")
+            logger.info(f"Could not find a previous successful run for {self.dataset.name}")
             return True
 
         # find the correct hash to compare with
@@ -252,11 +250,11 @@ class PipelineManager:
             known_sha256 = download_or_extract_result.sha256
 
         if known_sha256 != state.last_successful_run.sha256:
-            logger.info(f"Hash changed for {cls.dataset.name}: processing new data")
+            logger.info(f"Hash changed for {self.dataset.name}: processing new data")
             return True
 
         # hash unchanged - data is identical (false change)
-        logger.info(f"Hash unchanged for {cls.dataset.name}: false change detected")
+        logger.info(f"Hash unchanged for {self.dataset.name}: false change detected")
 
         # Cleanup downloaded file (duplicate)
         try:
@@ -277,8 +275,7 @@ class PipelineManager:
     # Transformations
     # =============================================================================
 
-    @classmethod
-    def to_bronze(cls, landing_path: Path, version: str) -> BronzeResult:
+    def to_bronze(self, landing_path: Path, version: str) -> BronzeResult:
         """Convert landing file to Parquet with normalized column names.
 
         Bronze layer transformations:
@@ -298,13 +295,13 @@ class PipelineManager:
         Raises:
             NotImplementedError: If no bronze transformation is registered
         """
-        resolver = PathResolver(dataset_name=cls.dataset.name)
+        resolver = PathResolver(dataset_name=self.dataset.name)
 
         bronze_path = resolver.bronze_path(version)
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
-            f"Converting to bronze for {cls.dataset.name}",
+            f"Converting to bronze for {self.dataset.name}",
             extra={
                 "landing_path": str(landing_path),
                 "bronze_path": str(bronze_path),
@@ -313,14 +310,14 @@ class PipelineManager:
         )
 
         # Retrieve dataset-specific bronze transformations
-        transforms = get_bronze_transform(cls.dataset.name)
+        transforms = get_bronze_transform(self.dataset.name)
         if transforms is None:
             raise NotImplementedError(
-                f"No bronze transformation registered for dataset: {cls.dataset.name}"
+                f"No bronze transformation registered for dataset: {self.dataset.name}"
             )
 
         # Apply the transformations
-        df = transforms(cls.dataset, landing_path)
+        df = transforms(landing_path)
         df.write_parquet(bronze_path)
 
         # Update latest symlink to point to this version
@@ -335,7 +332,7 @@ class PipelineManager:
         row_count = len(df)
 
         logger.info(
-            f"Bronze conversion complete for {cls.dataset.name}",
+            f"Bronze conversion complete for {self.dataset.name}",
             extra={
                 "n_rows": row_count,
                 "n_columns": len(columns),
@@ -346,8 +343,7 @@ class PipelineManager:
 
         return BronzeResult(row_count=row_count, columns=columns)
 
-    @classmethod
-    def to_silver(cls, bronze_result: BronzeResult) -> SilverResult:
+    def to_silver(self) -> SilverResult:
         """Apply business transformations to create silver layer.
 
         Silver layer transformations:
@@ -356,17 +352,14 @@ class PipelineManager:
         3. Apply custom business logic
         4. Write to silver current.parquet
 
-        Args:
-            bronze_result: Result from bronze transformation (for context)
-
         Returns:
             SilverResult with row count and columns
         """
         # TODO: do we need bronze_result ?
-        resolver = PathResolver(dataset_name=cls.dataset.name)
+        resolver = PathResolver(dataset_name=self.dataset.name)
 
         logger.info(
-            f"Transforming to silver for {cls.dataset.name}",
+            f"Transforming to silver for {self.dataset.name}",
             extra={
                 "bronze_source": resolver.bronze_latest_path,
                 "silver_dest": resolver.silver_current_path,
@@ -374,14 +367,14 @@ class PipelineManager:
         )
 
         # Retrieve dataset-specific silver transformations
-        transforms = get_silver_transform(cls.dataset.name)  # noqa: F821
+        transforms = get_silver_transform(self.dataset.name)
         if transforms is None:
             raise NotImplementedError(
-                f"No silver transformation registered for dataset: {cls.dataset.name}"
+                f"No silver transformation registered for dataset: {self.dataset.name}"
             )
 
         # Apply the transformations
-        df = transforms(cls.dataset, resolver)
+        df = transforms(resolver.bronze_latest_path)
 
         # Rotate silver BEFORE writing to disk: current → backup
         file_manager = FileManager(resolver)
@@ -397,7 +390,7 @@ class PipelineManager:
         row_count = len(df)
 
         logger.info(
-            f"Silver transformation complete for {cls.dataset.name}",
+            f"Silver transformation complete for {self.dataset.name}",
             extra={
                 "n_rows": row_count,
                 "n_columns": len(columns),

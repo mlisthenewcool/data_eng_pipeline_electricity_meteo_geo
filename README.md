@@ -68,13 +68,13 @@ de_projet_perso/
 
 Voir [README_DATA.md](docs/README_DATA.md)
 
-### Architecture des données : Médaillon (2026-01)
+### Architecture des données : Médaillon
 
 ```
 Landing → Bronze (versioned) → Silver (current + backup) → Gold (analytics)
 ```
 
-**Structure des répertoires**:
+**Structure des répertoires** :
 
 ```
 data/
@@ -91,7 +91,7 @@ data/
 └── _state/{dataset_name}.json           # État du pipeline
 ```
 
-**Caractéristiques par couche**:
+**Caractéristiques par couche** :
 
 - **Landing**
     - Données brutes téléchargées
@@ -232,10 +232,10 @@ Voir aussi :
 - [x] **Bronze versioning** : Historique complet avec rétention automatique (365j)
 - [x] **Silver dual-file pattern** : `current.parquet` + `backup.parquet` pour rollback rapide
 - [x] **IngestionFrequency enrichie** : Génération de versions selon la fréquence
-- [x] **DAG de maintenance** : Nettoyage hebdomadaire des anciennes versions Bronze
+- [ ] **DAG de maintenance** : Nettoyage hebdomadaire des anciennes versions Bronze
 - [ ] **State management**
-    - [ ] documenter le choix actuel du fichier JSON par dataset
-    - [ ] DAG de maintenance ou task de vérification avant chaque DAG d'ingestion ?
+    - [ ] Documenter le choix actuel du fichier JSON par dataset
+    - [ ] DAG ou task de vérification avant chaque DAG d'ingestion ?
     - → check_state
         - → si ok → check_should_run
         - → sinon → heal_state
@@ -243,13 +243,24 @@ Voir aussi :
 
 ### Phase 2 : Pipeline Robustesse
 
-- [ ] **Fail-fast validation** : Vérifier transformations enregistrées au démarrage DAG
+- [ ] **Fail-fast validation** :
+    - [ ] Vérifier transformations enregistrées au démarrage DAG
+    - [ ] Au début de chaque task, vérifier que l'état actuel est cohérent ?
 - [ ] **Exceptions personnalisées** : Remplacer `raise Exception` par exceptions métier
 - [ ] **Gestion d'erreurs cohérente** : Stratégie unifiée logging + exceptions, retirer les raise... from e
 - [ ] **Documentation pipeline** : Serializer, transformations, déroulement logique
 - [ ] **CLI tool** : `scripts/inspect_bronze.py` pour debug/maintenance manuelle
 
-### Phase 3 : Documentation, Tests & Validation
+### Phase 3 : Transformations & Qualité
+
+- [ ] **Transformations Bronze** : Typage Parquet, renommage systématique des colonnes
+- [ ] **Transformations Silver** : Data quality (Great Expectations / Soda Core)
+    - [ ] Normalisation types et unités
+    - [ ] Détection données aberrantes
+    - [ ] Validation schémas
+- [ ] **Mode incrémental** : Support datasets à mise à jour différentielle
+
+### Phase 4 : Documentation, Tests & Validation
 
 - [ ] **Documentation complète** : docs/README_.md
 - [ ] **Tests unitaires** :
@@ -259,15 +270,6 @@ Voir aussi :
 - [ ] **Tests transformations** : Validation Bronze → Silver pour tous les datasets
 - [ ] **Test maintenance DAG** : Mock fichiers anciens + vérification nettoyage
 - [ ] **Objectif couverture** : 9% → 60%+
-
-### Phase 4 : Transformations & Qualité
-
-- [ ] **Transformations Bronze** : Typage Parquet, renommage systématique des colonnes
-- [ ] **Transformations Silver** : Data quality (Great Expectations / Soda Core)
-    - [ ] Normalisation types et unités
-    - [ ] Détection données aberrantes
-    - [ ] Validation schémas
-- [ ] **Mode incrémental** : Support datasets à mise à jour différentielle
 
 ### Phase 5 : Production & Observabilité
 

@@ -5,20 +5,18 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
-from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.logger import logger
 from de_projet_perso.pipeline.transformations import register_bronze, register_silver
 
 
 @register_bronze("ign_contours_iris")
-def transform_bronze(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
+def transform_bronze(landing_path: Path) -> pl.DataFrame:
     """Bronze transformation for IGN Contours IRIS.
 
     Reads GeoPackage from landing layer (with original filename preserved)
     and applies basic filtering and geometry conversion.
 
     Args:
-        dataset: Dataset configuration from catalog
         landing_path: Actual path to landing file (e.g., data/landing/ign_contours_iris/iris.gpkg)
 
     Returns:
@@ -53,7 +51,7 @@ FROM ST_read(?, layer = 'contours_iris')
 
 
 @register_silver("ign_contours_iris")
-def transform_silver(dataset: Dataset, resolver) -> pl.DataFrame:
+def transform_silver(latest_bronze_path: Path) -> pl.DataFrame:
     """Silver transformation for IGN Contours IRIS.
 
     Reads from latest bronze Parquet and applies business transformations.
@@ -66,16 +64,13 @@ def transform_silver(dataset: Dataset, resolver) -> pl.DataFrame:
     - Quality metrics
 
     Args:
-        dataset: Dataset configuration
-        resolver: PathResolver instance for path operations
+        latest_bronze_path: Path to the latest bronze version
 
     Returns:
         Silver layer DataFrame
     """
-    # Read from latest bronze (via symlink)
-    bronze_latest = resolver.bronze_latest_path()
-    logger.info("Reading from bronze latest", extra={"bronze_path": str(bronze_latest)})
-    df = pl.read_parquet(bronze_latest)
+    logger.info("Reading from bronze latest", extra={"bronze_path": latest_bronze_path})
+    df = pl.read_parquet(latest_bronze_path)
 
     # For now, pass-through (no transformation needed)
     return df

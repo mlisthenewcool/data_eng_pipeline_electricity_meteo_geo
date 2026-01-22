@@ -33,7 +33,6 @@ from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.pipeline.manager import PipelineManager
 from de_projet_perso.pipeline.results import (
-    BronzeResult,
     CheckMetadataResult,
     DownloadResult,
     ExtractionResult,
@@ -51,7 +50,9 @@ DEFAULT_ARGS: dict[str, Any] = {
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=10),
     "execution_timeout": timedelta(minutes=30),
-    "depends_on_past": True,
+    "depends_on_past": False,  # if True then DAGs will freeze if previous execution failed
+    # Note: max_active_runs is controlled globally via AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG=1
+    # This allows inter-DAG parallelism while preventing intra-DAG conflicts on files
 }
 
 # Task-specific timeouts (override defaults)
@@ -189,10 +190,12 @@ def create_common_tasks(manager: PipelineManager, asset: Asset) -> dict[str, Any
         Yields:
             Metadata for the silver Asset with enriched information
         """
-        bronze = BronzeResult.from_dict(bronze_dict)
+        # todo: we don't really need that, atm bronze_dict has more keys than just BronzeResult
+        #  and we only need those extra keys here for metadata
+        # bronze = BronzeResult.from_dict(bronze_dict)
 
         # Transform to silver
-        silver = manager.to_silver(bronze_result=bronze)
+        silver = manager.to_silver()
 
         # Note: trick the analyzer
         sha256 = bronze_dict.get("extracted_file_sha256") or bronze_dict.get("sha256")
@@ -405,7 +408,7 @@ def create_simple_dag(manager: PipelineManager, asset: Asset) -> DAG:
         start_date=datetime(2026, 1, 1),
         catchup=False,
         default_args=DEFAULT_ARGS,
-        max_active_runs=1,  # Prevent concurrent runs
+        # max_active_runs controlled globally via AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG
         tags=[
             manager.dataset.source.provider,
             "simple-dag",
@@ -513,7 +516,7 @@ def create_archive_dag(manager: PipelineManager, asset: Asset) -> DAG:
         start_date=datetime(2026, 1, 1),
         catchup=False,
         default_args=DEFAULT_ARGS,
-        max_active_runs=1,  # Prevent concurrent runs
+        # max_active_runs controlled globally via AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG
         tags=[
             manager.dataset.source.provider,
             "archive-dag",
