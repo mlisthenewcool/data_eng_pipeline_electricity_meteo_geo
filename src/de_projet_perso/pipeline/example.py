@@ -36,7 +36,7 @@ if __name__ == "__main__":
     # ===================================================================================
     # /!\ DO NOT USE sys.exit() WHEN RUNNING ON AIRFLOW. Let Airflow handle exceptions.
     # ===================================================================================
-    start_time = datetime.now()
+    _start_time = datetime.now()
 
     try:
         _catalog = DataCatalog.load(settings.data_catalog_file_path)
@@ -58,7 +58,7 @@ if __name__ == "__main__":
     # ==============================
     # Step 0: Prepare version, PathResolver and PipelineManager
     # ==============================
-    _version = _dataset.ingestion.frequency.format_datetime_as_version(start_time)
+    _version = _dataset.ingestion.frequency.format_datetime_as_version(_start_time)
     _path_resolver = PathResolver(dataset_name=_dataset.name)
     _manager = PipelineManager(_dataset)
 
@@ -168,18 +168,18 @@ if __name__ == "__main__":
 
     logger.info(
         "Pipeline completed successfully !",
-        extra={"duration": (datetime.now() - start_time).total_seconds()},
+        extra={"duration": (datetime.now() - _start_time).total_seconds()},
     )
 
     # ==============================
     # Step 6: Save successful run metadata
     # ==============================
     if not _extraction:
-        sha256 = _download.sha256
-        file_size_mib = _download.size_mib
+        _sha256 = _download.sha256
+        _file_size_mib = _download.size_mib
     else:
-        sha256 = _extraction.extracted_file_sha256
-        file_size_mib = _extraction.size_mib
+        _sha256 = _extraction.extracted_file_sha256
+        _file_size_mib = _extraction.size_mib
 
     PipelineStateManager.update_success(
         dataset_name=_dataset.name,
@@ -187,8 +187,8 @@ if __name__ == "__main__":
         etag=_metadata.remote_file_metadata.etag,
         last_modified=_metadata.remote_file_metadata.last_modified,
         content_length=_metadata.remote_file_metadata.content_length,
-        sha256=sha256,
-        file_size_mib=file_size_mib,
+        sha256=_sha256,
+        file_size_mib=_file_size_mib,
         row_count=_silver.row_count,
         columns=_silver.columns,
     )

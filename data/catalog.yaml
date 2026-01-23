@@ -54,15 +54,32 @@ datasets:
       url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-regional-tr/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
       format: "parquet"
     ingestion:
-      frequency: "daily"
+      frequency: "hourly"
       mode: "snapshot"
 
   meteo_france_stations:
-    description: "Liste et localisation des stations météorologiques Météo France"
+    description: "Liste des stations météorologiques de Météo France avec accès aux caractéristiques détaillées."
+    # url_description: "https://www.data.gouv.fr/datasets/informations-sur-les-stations-metadonnees"
     source:
       provider: "MétéoFrance"
+      # url: "https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/METADONNEES_STATION/fiches.json"
       url: "https://www.data.gouv.fr/api/1/datasets/r/1fe544d8-4615-4642-a307-5956a7d90922"
       format: "json"
     ingestion:
       frequency: "daily"
       mode: "snapshot"
+
+  # exemple d'un fichier pour télécharger les données climatologiques sans passer par API
+  # https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/HOR/H_01_latest-2025-2026.csv.gz
+
+  # documentation API climatologie: https://portail-api.meteofrance.fr/web/fr/api/DonneesPubliquesClimatologie
+  # https://portail-api.meteofrance.fr/web/fr/api/test/a5935def-80ae-4e7e-83bc-3ef622f0438d/
+#  meteo_france_climatologie:
+#    description:
+#    source:
+#      provider:
+#      url:
+#      format:
+#    ingestion:
+#      frequency:
+#      mode:

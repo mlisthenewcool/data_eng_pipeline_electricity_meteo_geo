@@ -49,6 +49,7 @@ services:
     environment:
       # reference : https://airflow.apache.org/docs/docker-stack/build-arg-ref.html
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      # AIRFLOW_CONN_POSTGRES_DEFAULT
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: >
         bash -c 'printf "postgresql+psycopg://%s:%s@postgres_service/airflow" "$$(cat /run/secrets/postgres_root_username)" "$$(cat /run/secrets/postgres_root_password)"'
       AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Paris

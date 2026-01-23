@@ -9,6 +9,7 @@
 - [ ] **DAG de maintenance** : Nettoyage hebdomadaire des anciennes versions Bronze
 - [ ] **State management**
     - [x] Documenter le choix actuel du fichier JSON par dataset
+    - [ ] Regarder si possibilité de remplacer le JSON par les métadonnées émises pour l'asset (Metadata couche silver)
     - [ ] DAG ou task de vérification avant chaque DAG d'ingestion ?
     - → check_state
         - → si ok → check_should_run

@@ -223,6 +223,7 @@ class IngestionFrequency(StrEnum):
             )
 
         if self == IngestionFrequency.HOURLY:
+            # TODO: "{{ data_interval_start.strftime('%Y%m%dT%H') }}" ou "{{ ts_nodash[:11] }}"
             return "{{ ts_nodash }}" if no_dash else "{{ ts }}"
 
         return "{{ ds_nodash }}" if no_dash else "{{ ds }}"
