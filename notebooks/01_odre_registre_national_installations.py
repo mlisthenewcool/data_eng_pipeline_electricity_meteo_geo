@@ -14,7 +14,7 @@ def _():
 
 @app.cell
 def _():
-    from de_electricity_meteo.config.paths import (
+    from de_projet_perso.config.paths import (
         ODRE_REGISTRE_NATIONAL_INSTALLATIONS_BRONZE,
     )
 

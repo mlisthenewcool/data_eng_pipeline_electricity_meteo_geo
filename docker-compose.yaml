@@ -28,7 +28,8 @@ services:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_root_password
       POSTGRES_USER_FILE: /run/secrets/postgres_root_username
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U $$(cat /run/secrets/postgres_root_username) -d airflow" ]
+      # Check both databases are ready
+      test: [ "CMD-SHELL", "pg_isready -U $$(cat /run/secrets/postgres_root_username) -d airflow && pg_isready -U $$(cat /run/secrets/postgres_root_username) -d projet_energie" ]
       interval: 5s
       timeout: 5s
       retries: 3

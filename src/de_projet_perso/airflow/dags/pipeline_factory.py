@@ -9,8 +9,8 @@ import traceback
 
 from airflow.sdk import DAG
 
+from de_projet_perso.airflow.assets import get_silver_asset
 from de_projet_perso.airflow.dags.dataset_pipelines_factory import (
-    _create_asset_for_dataset,
     _create_error_dag,
     create_archive_dag,
     create_simple_dag,
@@ -47,7 +47,7 @@ def _generate_all_dags() -> dict[str, DAG]:
 
     for name, dataset in catalog.datasets.items():
         try:
-            asset = _create_asset_for_dataset(dataset)
+            asset = get_silver_asset(dataset)
             manager = PipelineManager(dataset=dataset)
 
             # TODO: injecter directement la fonction si plus de types de DAGs

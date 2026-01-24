@@ -21,6 +21,7 @@
     - [ ] passer par API et ne récupérer que les nouvelles données ?
     - [ ] eco2mix : def (une seule fois), cons (une fois par jour), tr (une fois par heure)
     - [ ] meteo_observations & meteo_climatologie
+- [ ] Simplification de nommage des fichiers bronze (heure max)
 
 ## Phase 2 : Pipeline Robustesse
 

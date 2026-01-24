@@ -7,6 +7,7 @@ import polars as pl
 
 from de_projet_perso.core.logger import logger
 from de_projet_perso.pipeline.transformations import register_bronze, register_silver
+from de_projet_perso.pipeline.validators import validate_ign_contours_iris
 
 
 @register_bronze("ign_contours_iris")
@@ -33,8 +34,8 @@ def transform_bronze(landing_path: Path) -> pl.DataFrame:
     #  ST_AsGeoJSON(geometrie) AS geom_json
     conn = duckdb.connect(":memory:")
     conn.execute("INSTALL spatial; LOAD spatial;")
-    conn.execute("SET memory_limit = '1GB'")
-    conn.execute("SET threads = 2")
+    # conn.execute("SET memory_limit = '1GB'")
+    # conn.execute("SET threads = 2")
 
     # noinspection SqlResolve
     query = """
@@ -54,23 +55,67 @@ FROM ST_read(?, layer = 'contours_iris')
 def transform_silver(latest_bronze_path: Path) -> pl.DataFrame:
     """Silver transformation for IGN Contours IRIS.
 
-    Reads from latest bronze Parquet and applies business transformations.
-    For now, pass-through transformation (no additional business logic).
+    Enriches IRIS contours with centroid coordinates in WGS84.
+    The original geometry is in Lambert 93 (EPSG:2154), we transform
+    the centroid to WGS84 (EPSG:4326) for compatibility with other datasets.
 
-    Future enhancements could include:
-    - Data enrichment
-    - Geocoding
-    - Aggregations
-    - Quality metrics
+    Transformations applied:
+    - Remove cleabs column (internal IGN identifier, not useful)
+    - Compute centroid of each IRIS polygon
+    - Transform centroid from Lambert 93 to WGS84
+    - Extract latitude and longitude as separate columns
 
     Args:
         latest_bronze_path: Path to the latest bronze version
 
     Returns:
-        Silver layer DataFrame
+        Silver layer DataFrame with centroid_lat and centroid_lon columns
     """
-    logger.info("Reading from bronze latest", extra={"bronze_path": latest_bronze_path})
-    df = pl.read_parquet(latest_bronze_path)
+    logger.info("Reading from bronze latest", extra={"bronze_path": str(latest_bronze_path)})
 
-    # For now, pass-through (no transformation needed)
+    # Use DuckDB for spatial operations on the WKB geometry
+    conn = duckdb.connect(":memory:")
+    conn.execute("INSTALL spatial; LOAD spatial;")
+
+    # Register the parquet file as a table
+    conn.execute(f"CREATE VIEW bronze AS SELECT * FROM read_parquet('{latest_bronze_path}')")
+
+    # Compute centroids and transform to WGS84
+    # geom_wkb is stored as WKB in Lambert 93 (EPSG:2154)
+    # Note: DuckDB's ST_Transform from Lambert 93 to WGS84 returns coordinates
+    # in (lat, lon) order instead of standard (lon, lat), so we use ST_X for lat
+    # and ST_Y for lon (counterintuitive but verified empirically)
+    # noinspection SqlResolve
+    query = """
+    SELECT
+        code_iris,
+        nom_iris,
+        code_insee,
+        nom_commune,
+        type_iris,
+        geom_wkb,
+        ST_X(ST_Transform(
+            ST_Centroid(ST_GeomFromWKB(geom_wkb)),
+            'EPSG:2154',
+            'EPSG:4326'
+        )) AS centroid_lat,
+        ST_Y(ST_Transform(
+            ST_Centroid(ST_GeomFromWKB(geom_wkb)),
+            'EPSG:2154',
+            'EPSG:4326'
+        )) AS centroid_lon
+    FROM bronze
+    """
+
+    logger.debug("Computing centroids with DuckDB spatial extension")
+    df = conn.execute(query).pl()
+    conn.close()
+
+    # Validate output before returning
+    validate_ign_contours_iris(df)
+
+    logger.info(
+        "Silver transformation completed",
+        extra={"n_rows": len(df), "columns": df.columns},
+    )
     return df

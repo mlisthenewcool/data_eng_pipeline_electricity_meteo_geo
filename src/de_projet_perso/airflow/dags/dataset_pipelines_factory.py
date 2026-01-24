@@ -29,8 +29,6 @@ from typing import Any
 
 from airflow.sdk import DAG, Asset, Metadata, dag, task
 
-from de_projet_perso.core.data_catalog import Dataset
-from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.pipeline.manager import PipelineManager
 from de_projet_perso.pipeline.results import (
     CheckMetadataResult,
@@ -95,35 +93,6 @@ def _create_error_dag(dag_id: str, error_message: str) -> DAG:
         report_error()
 
     return error_dag()
-
-
-# =============================================================================
-# Asset Factory
-# =============================================================================
-
-
-def _create_asset_for_dataset(dataset: Dataset) -> Asset:
-    """Create an Asset representing the silver layer output for a dataset.
-
-    Args:
-        dataset: Dataset configuration
-
-    Returns:
-        Asset configured for the silver layer output
-    """
-    # Create resolver to get silver path (with current version - generic path)
-    resolver = PathResolver(dataset_name=dataset.name)
-
-    return Asset(
-        name=f"{dataset.name}_silver",
-        uri=f"file:///{resolver.silver_current_path}",
-        group="data-pipeline",
-        extra={
-            "dataset_name": dataset.name,
-            "format": str(dataset.source.format),
-            "description": dataset.description,
-        },
-    )
 
 
 # =============================================================================

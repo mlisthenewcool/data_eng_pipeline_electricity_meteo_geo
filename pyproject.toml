@@ -21,7 +21,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "apache-airflow>=3.1.6", # installed for DX but actual Airflow code will be runned through Docker
-    "marimo[recommended]>=0.19.5",
+    "marimo[recommended]>=0.19.6",
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
