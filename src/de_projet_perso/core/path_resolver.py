@@ -5,12 +5,14 @@ It implements the medallion architecture (landing → bronze → silver → gold
 - Landing: Temporary storage with original filenames
 - Bronze: Versioned history with 'latest.parquet' symlink
 - Silver: Current + backup files for fast rollback
+- Gold: Current + backup files for fast rollback
 
 Key Design Decisions:
 - No dependency on Dataset class (uses primitives only)
 - Supports both Airflow ({{ ds }} and {{ ts }}) and non-Airflow contexts
 - Bronze versions retained for 1 year (cleanup via maintenance DAG)
 - Silver uses current.parquet + backup.parquet strategy
+- Gold uses current.parquet + backup.parquet strategy
 
 Example:
     >>> # Airflow context (uses Airflow template variables)
@@ -147,7 +149,7 @@ class PathResolver:
             return None
 
         # Resolve symlink to get target filename
-        # stem: extract version from filename (remove .parquet)
+        # .stem: extract version from filename (remove .parquet)
         return latest_link.readlink().stem
 
     def list_bronze_versions(self) -> list[Path]:
@@ -205,6 +207,41 @@ class PathResolver:
         """
         return self._silver_dir / "backup.parquet"
 
+    # =========================================================================
+    # Gold Layer (Analytical datasets from joined sources)
+    # =========================================================================
+
+    @property
+    def _gold_dir(self) -> Path:
+        """Get gold directory for this dataset.
+
+        Returns:
+            {data_dir_path}/gold/{dataset_name}/
+        """
+        return self.base_dir / "gold" / self.dataset_name
+
+    @property
+    def gold_current_path(self) -> Path:
+        """Get current gold file path (always named 'current.parquet').
+
+        Gold layer datasets are analytical tables built from joining
+        multiple Silver sources. They follow the same current/backup
+        strategy as Silver for fast rollback.
+
+        Returns:
+            {data_dir_path}/gold/{dataset_name}/current.parquet
+        """
+        return self._gold_dir / "current.parquet"
+
+    @property
+    def gold_backup_path(self) -> Path:
+        """Get backup gold file path (previous version for rollback).
+
+        Returns:
+            {data_dir_path}/gold/{dataset_name}/backup.parquet
+        """
+        return self._gold_dir / "backup.parquet"
+
 
 if __name__ == "__main__":
     import sys
@@ -233,6 +270,9 @@ if __name__ == "__main__":
                 f"bronze_path ('{_run_version}')": _resolver.bronze_path(_run_version),
                 "bronze_latest_path": _resolver.bronze_latest_path,
                 "bronze_latest_version": _resolver.bronze_latest_version(),
+                "silver_backup_path": _resolver.silver_backup_path,
                 "silver_current_path": _resolver.silver_current_path,
+                "gold_current_path": _resolver.gold_current_path,
+                "gold_backup_path": _resolver.gold_backup_path,
             },
         )

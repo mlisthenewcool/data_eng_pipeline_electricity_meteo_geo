@@ -1,4 +1,8 @@
+# https://airflow.apache.org/docs/apache-airflow/stable/installation/prerequisites.html
+# https://airflow.apache.org/docs/apache-airflow/stable/configurations-ref.html
 # https://airflow.apache.org/docs/docker-stack/build.html
+
+# This build use psycopg (v3) instead of psycopg2.
 FROM apache/airflow:latest-python3.13
 
 # ------------------------------

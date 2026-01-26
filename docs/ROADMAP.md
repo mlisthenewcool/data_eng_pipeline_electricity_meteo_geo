@@ -8,7 +8,8 @@
 - [x] **IngestionFrequency enrichie** : Génération de versions selon la fréquence
 - [ ] **DAG de maintenance** : Nettoyage hebdomadaire des anciennes versions Bronze
 - [ ] **State management**
-    - [ ] Documenter le choix actuel du fichier JSON par dataset
+    - [x] Documenter le choix actuel du fichier JSON par dataset
+    - [ ] Regarder si possibilité de remplacer le JSON par les métadonnées émises pour l'asset (Metadata couche silver)
     - [ ] DAG ou task de vérification avant chaque DAG d'ingestion ?
     - → check_state
         - → si ok → check_should_run
@@ -20,6 +21,7 @@
     - [ ] passer par API et ne récupérer que les nouvelles données ?
     - [ ] eco2mix : def (une seule fois), cons (une fois par jour), tr (une fois par heure)
     - [ ] meteo_observations & meteo_climatologie
+- [ ] Simplification de nommage des fichiers bronze (heure max)
 
 ## Phase 2 : Pipeline Robustesse
 
@@ -30,8 +32,9 @@
 - [ ] **Gestion d'erreurs cohérente** : Stratégie unifiée logging + exceptions, retirer les raise... from e
 - [ ] **Documentation pipeline** : Serializer, transformations, déroulement logique
 - [ ] **CLI tool** : `scripts/inspect_bronze.py` pour debug/maintenance manuelle
-- [ ] Après ajout de nouvelles transformations silver, ne relancer que ça par exemple, par l'intégralité du DAG
-- [ ] 
+- [ ] Après ajout de nouvelles transformations silver, relancer automatiquement ? Uniquement les transformations ?
+- [ ] Séparation des différents DAGs dans des fichiers différents
+- [ ] Ajout de l'étape d'insertion dans Postgres à la fin des DAGs
 
 ## Phase 3 : Transformations & Qualité
 
@@ -45,9 +48,10 @@
 ## Phase 4 : Documentation, Tests & Validation
 
 - [ ] **Documentation complète** : docs/README_.md
-  - [ ] Ajouter screenshots Airflow
-  - [ ] Schéma des liens entre datasets
-  - [ ] Vue visuelle des layers plutôt que textuelle
+    - [ ] Ajouter screenshots Airflow
+    - [ ] Schéma des liens entre datasets
+    - [ ] Vue visuelle des layers plutôt que textuelle
+    - [ ] Super exemple sur lequel s'appuyer : https://github.com/abeltavares/batch-data-pipeline
 - [ ] **Tests unitaires** :
     - [ ] core
     - [ ] utils
@@ -58,7 +62,9 @@
 
 ## Phase 5 : Production & Observabilité
 
-- [ ] **Déploiement Docker** : Finaliser `docker-compose.yaml` pour production
+- [ ] **Déploiement Docker** :
+    - [ ] Finaliser `docker-compose.yaml` pour production
+    - [ ] Gestion des privilèges pour Postgres
 - [ ] **Améliorations Airflow** :
     - [ ] Parallélisation avec `@task.map`
     - [ ] Cleanup avec @setup & @teardown

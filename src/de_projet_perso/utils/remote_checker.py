@@ -41,9 +41,9 @@ class RemoteFileInfo:
         content_length: Content-Length in bytes
     """
 
-    etag: str | None
-    last_modified: datetime | None
-    content_length: int | None
+    etag: str | None = None
+    last_modified: datetime | None = None
+    content_length: int | None = None
 
     def _has_any_field(self) -> bool:
         """Check if at least one metadata field is populated."""
@@ -111,7 +111,7 @@ def get_remote_file_info(
         httpx.TimeoutException: If the request times out.
         httpx.HTTPError: For other network-related issues.
     """
-    logger.debug("Checking remote file metadata", extra={"url": url})
+    logger.info("Checking remote file metadata", extra={"url": url})
 
     try:
         with httpx.Client(timeout=timeout, follow_redirects=allow_redirects, http2=True) as client:
@@ -162,7 +162,7 @@ def get_remote_file_info(
 
     info = RemoteFileInfo(etag=etag, last_modified=last_modified, content_length=content_length)
 
-    logger.debug(
+    logger.info(
         "Remote file metadata retrieved",
         extra={
             "etag": etag,

@@ -30,67 +30,40 @@ When to reconsider this approach:
   - Need for long-term historical analysis (> 6 months)
 """
 
-from dataclasses import field
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
+
+from pydantic import Field
 
 from de_projet_perso.core.models import StrictModel
 from de_projet_perso.core.settings import settings
+from de_projet_perso.pipeline.results import SilverResult
 
 
-class PipelineAction(StrEnum):
-    """Actions possibles pour un pipeline.
-
-    Simplified version - relies on Airflow native features and smart skip logic:
-    - FIRST_RUN: Initial execution (no state file exists)
-    - REFRESH: Remote file changed OR scheduled refresh (data stale)
-    - SKIP: Remote unchanged AND SHA256 unchanged (smart skip)
-
-    Removed actions (handled differently):
-    - HEAL: Manual trigger or monitoring DAG (inline validation in tasks)
-    - RETRY: Handled by Airflow native retry mechanism (retries=N)
-    """
-
-    FIRST_RUN = "first_run"  # Première exécution (pas de state)
-    REFRESH = "refresh"  # Données périmées ou fichier distant changé
-    SKIP = "skip"  # Tout est OK (remote + SHA256 inchangés)
-
-
-# class Stage(StrEnum):
-#     """Étapes du pipeline."""
-#
-#     DOWNLOAD = "download"
-#     EXTRACT = "extract"
-#     LANDING = "landing"
-#     BRONZE = "bronze"
-#     SILVER = "silver"
-
-
-class RunRecord(StrictModel):
+class RunRecord(SilverResult):
     """Enregistrement d'une exécution réussie."""
 
-    timestamp: datetime = field(default_factory=datetime.now)
-    version: str
+    timestamp: datetime = Field(default_factory=datetime.now)
 
-    # from metadata check
-    etag: str | None
-    last_modified: datetime | None
-    content_length: int | None
-
-    # from download or extraction
-    sha256: str
-    file_size_mib: float
-
-    # from silver
-    row_count: int
-    columns: list[str]
+    # version: str
+    # # from metadata check
+    # etag: str | None
+    # last_modified: datetime | None
+    # content_length: int | None
+    #
+    # # from download or extraction
+    # sha256: str
+    # file_size_mib: float
+    #
+    # # from silver
+    # row_count: int
+    # columns: list[str]
 
 
 class FailedRunRecord(StrictModel):
     """Enregistrement d'une exécution échouée."""
 
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=datetime.now)
     version: str
 
     stage_failed: str
@@ -134,48 +107,21 @@ class PipelineStateManager:
         """Sauvegarde l'état dans le fichier JSON."""
         path = cls.get_state_path(state.dataset_name)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(state.model_dump_json(indent=2))
+        path.write_text(state.model_dump_json(indent=2, exclude_none=True))
 
     @classmethod
-    def update_success(  # noqa: PLR0913
-        cls,
-        dataset_name: str,
-        version: str,
-        etag: str | None,
-        last_modified: datetime | None,
-        content_length: int | None,
-        sha256: str,
-        file_size_mib: float,
-        row_count: int,
-        columns: list[str],
-    ) -> None:
+    def update_success(cls, dataset_name: str, data: SilverResult) -> None:
         """Update pipeline state after successful run.
 
         Args:
-            dataset_name: Dataset identifier
-            version: Dataset version
-            etag: ...
-            last_modified: ...
-            content_length: ...
-            sha256: SHA256 hash of source file
-            file_size_mib: ...
-            row_count: Number of rows in dataset
-            columns: List of column names
+            dataset_name: todo
+            data: todo
         """
         state = cls.load(dataset_name)
 
-        if state is None:
-            state = cls.create_new(dataset_name, version)
+        if not state:
+            state = cls.create_new(dataset_name, data.version)
 
-        state.last_successful_run = RunRecord(
-            version=version,
-            etag=etag,
-            last_modified=last_modified,
-            content_length=content_length,
-            sha256=sha256,
-            file_size_mib=file_size_mib,
-            row_count=row_count,
-            columns=columns,
-        )
+        state.last_successful_run = RunRecord.model_validate(data.model_dump())
 
         cls.save(state)

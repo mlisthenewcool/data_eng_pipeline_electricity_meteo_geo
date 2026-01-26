@@ -166,3 +166,55 @@ class FileManager:
                     "backup": str(self.resolver.silver_backup_path),
                 },
             )
+
+    def rotate_gold(self) -> None:
+        """Rotate gold files: current → backup (before writing new current).
+
+        This should be called BEFORE writing the new gold current file.
+        If current exists, it becomes backup (old backup is overwritten).
+        Similar to rotate_silver() but for Gold layer.
+
+        Example workflow:
+            1. file_manager.rotate_gold()  # current → backup
+            2. df.write_parquet(resolver.gold_current_path)  # New current
+        """
+        if self.resolver.gold_current_path.exists():
+            # Copy current to backup (overwrite old backup)
+            self.resolver.gold_backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(self.resolver.gold_current_path, self.resolver.gold_backup_path)
+            logger.debug(
+                "Rotated gold files",
+                extra={
+                    "dataset_name": self.resolver.dataset_name,
+                    "current": str(self.resolver.gold_current_path),
+                    "backup": str(self.resolver.gold_backup_path),
+                },
+            )
+
+    def rollback_gold(self) -> bool:
+        """Rollback gold: restore backup → current.
+
+        Returns:
+            True if rollback succeeded, False if no backup exists
+
+        Use case:
+            If new gold transformation produces invalid data,
+            quickly restore previous version without reprocessing.
+        """
+        if not self.resolver.gold_backup_path.exists():
+            logger.warning(
+                "Cannot rollback gold: no backup exists",
+                extra={"dataset_name": self.resolver.dataset_name},
+            )
+            return False
+
+        shutil.copy2(self.resolver.gold_backup_path, self.resolver.gold_current_path)
+        logger.debug(
+            "Rolled back gold to backup version",
+            extra={
+                "dataset_name": self.resolver.dataset_name,
+                "backup": str(self.resolver.gold_backup_path),
+                "current": str(self.resolver.gold_current_path),
+            },
+        )
+        return True

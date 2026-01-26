@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.18.4"
+__generated_with = "0.19.5"
 app = marimo.App(width="full")
 
 
@@ -8,21 +8,35 @@ app = marimo.App(width="full")
 def _():
     import marimo as mo
     import polars as pl
+    from pathlib import Path
 
-    from de_electricity_meteo.config.paths import METEO_FRANCE_INFO_STATIONS_BRONZE, DATA_BRONZE
+    from de_projet_perso.core.settings import settings
 
-    return DATA_BRONZE, METEO_FRANCE_INFO_STATIONS_BRONZE, pl
+    return Path, pl, settings
 
 
 @app.cell
-def _(METEO_FRANCE_INFO_STATIONS_BRONZE, pl):
-    df = pl.read_json(METEO_FRANCE_INFO_STATIONS_BRONZE)
+def _(Path, pl, settings):
+    _path = settings.data_dir_path / "meteo_france_info_stations_depuis_data_gouv.json"
 
+    def read_df(path: Path) -> pl.DataFrame:
+        return pl.read_json(path)
+
+    df = read_df(_path)
+    return (df,)
+
+
+@app.cell
+def _(df):
     print(df.shape)
     print(df.columns)
+    return
 
-    df
-    return (df,)
+
+@app.cell
+def _(df):
+    df.head(10)
+    return
 
 
 @app.cell
