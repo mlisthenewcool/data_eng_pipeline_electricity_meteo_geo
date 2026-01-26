@@ -1,11 +1,5 @@
 # --- Notes
 # PostgreSQL 17 is the latest supported version by Airflow.
-# https://airflow.apache.org/docs/apache-airflow/stable/installation/prerequisites.html
-#
-# Use psycopg (v3) instead of psycopg2 with custom build.
-#
-# https://airflow.apache.org/docs/apache-airflow/stable/configurations-ref.html
-
 
 # --- Personal notes
 # La clé 'volumes' en bas du fichier déclare un espace de stockage nommé (named volume)
@@ -27,9 +21,10 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_root_password
       POSTGRES_USER_FILE: /run/secrets/postgres_root_username
+      POSTGRES_DB: "airflow"
     healthcheck:
       # Check both databases are ready
-      test: [ "CMD-SHELL", "pg_isready -U $$(cat /run/secrets/postgres_root_username) -d airflow && pg_isready -U $$(cat /run/secrets/postgres_root_username) -d projet_energie" ]
+      test: [ "CMD-SHELL", "USER=$$(cat /run/secrets/postgres_root_username); pg_isready -U $$USER -d airflow && pg_isready -U $$USER -d projet_energie" ]
       interval: 5s
       timeout: 5s
       retries: 3
@@ -39,7 +34,7 @@ services:
       - postgres_root_username
 
   airflow_service:
-    container_name: airflow_container # remove scale possibility
+    container_name: airflow_container # remove scale possibility by giving explicit name
     build:
       context: .
       dockerfile: airflow.Dockerfile

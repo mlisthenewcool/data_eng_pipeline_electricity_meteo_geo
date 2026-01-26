@@ -44,7 +44,7 @@ datasets:
       url: "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-regional-cons-def/exports/parquet?lang=fr&timezone=Europe%2FBerlin"
       format: "parquet"
     ingestion:
-      frequency: "daily"
+      frequency: "daily" # TODO[prod]: change to weekly or monthly
       mode: "snapshot"
 
   odre_eco2mix_tr:

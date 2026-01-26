@@ -32,7 +32,9 @@
 - [ ] **Gestion d'erreurs cohérente** : Stratégie unifiée logging + exceptions, retirer les raise... from e
 - [ ] **Documentation pipeline** : Serializer, transformations, déroulement logique
 - [ ] **CLI tool** : `scripts/inspect_bronze.py` pour debug/maintenance manuelle
-- [ ] Après ajout de nouvelles transformations silver, ne relancer que ça par exemple, par l'intégralité du DAG
+- [ ] Après ajout de nouvelles transformations silver, relancer automatiquement ? Uniquement les transformations ?
+- [ ] Séparation des différents DAGs dans des fichiers différents
+- [ ] Ajout de l'étape d'insertion dans Postgres à la fin des DAGs
 
 ## Phase 3 : Transformations & Qualité
 
@@ -49,6 +51,7 @@
     - [ ] Ajouter screenshots Airflow
     - [ ] Schéma des liens entre datasets
     - [ ] Vue visuelle des layers plutôt que textuelle
+    - [ ] Super exemple sur lequel s'appuyer : https://github.com/abeltavares/batch-data-pipeline
 - [ ] **Tests unitaires** :
     - [ ] core
     - [ ] utils
@@ -59,7 +62,9 @@
 
 ## Phase 5 : Production & Observabilité
 
-- [ ] **Déploiement Docker** : Finaliser `docker-compose.yaml` pour production
+- [ ] **Déploiement Docker** :
+    - [ ] Finaliser `docker-compose.yaml` pour production
+    - [ ] Gestion des privilèges pour Postgres
 - [ ] **Améliorations Airflow** :
     - [ ] Parallélisation avec `@task.map`
     - [ ] Cleanup avec @setup & @teardown

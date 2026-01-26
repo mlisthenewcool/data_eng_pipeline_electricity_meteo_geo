@@ -29,8 +29,9 @@ from de_projet_perso.core.exceptions import (
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.core.settings import settings
+from de_projet_perso.pipeline.constants import PipelineAction
 from de_projet_perso.pipeline.manager import PipelineManager
-from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
+from de_projet_perso.pipeline.state import PipelineStateManager
 
 if __name__ == "__main__":
     # ===================================================================================
@@ -75,7 +76,7 @@ if __name__ == "__main__":
 
     logger.info(
         "Server metadata has changed or we found insuffisant metadata, will download data to check",
-        extra=_metadata.to_serializable(),
+        extra=_metadata.model_dump(),
     )
 
     # ==============================
@@ -85,7 +86,7 @@ if __name__ == "__main__":
     logger.info("Downloading dataset...")
     logger.info("=" * 80)
     try:
-        _download = _manager.download(_version)
+        _ingest = _manager.ingest(_version, _metadata.remote_metadata)
     except httpx.HTTPStatusError as e:
         logger.exception(
             f"Download failed. Server returned code: {e.response.status_code}",
@@ -105,7 +106,7 @@ if __name__ == "__main__":
         logger.critical("Download failed. Unexpected error", extra={"more_infos": str(e)})
         sys.exit(-1)
 
-    logger.info("Download completed !", extra=_download.to_serializable())
+    logger.info("Download completed !", extra=_ingest.model_dump())
 
     # ==============================
     # Step 3: Extract (if archive) + check if hash changed
@@ -115,7 +116,7 @@ if __name__ == "__main__":
         logger.info("Extracting archive...")
         logger.info("=" * 80)
         try:
-            _extraction = _manager.extract_archive(archive_path=_download.path)
+            _extract = _manager.extract_archive(_ingest)
         except (
             ArchiveNotFoundError,
             FileNotFoundInArchiveError,
@@ -124,22 +125,20 @@ if __name__ == "__main__":
             logger.exception("Extraction failed", extra={"error": str(e)})
             sys.exit(-1)
 
-        _landing_path = _extraction.extracted_file_path
-        logger.info("Extraction completed !", extra=_extraction.to_serializable())
+        logger.info("Extraction completed !", extra=_extract.model_dump())
 
         logger.info("=" * 80)
         logger.info("Checking hash...")
         logger.info("=" * 80)
-        _should_continue = _manager.has_hash_changed(_extraction)
+        _should_continue = _manager.has_hash_changed(_extract)
     else:
         logger.info("=" * 80)
         logger.info("Checking hash...")
         logger.info("=" * 80)
-        _should_continue = _manager.has_hash_changed(_download)
+        _should_continue = _manager.has_hash_changed(_ingest)
 
         # For non-archive: get landing_path from download
-        _extraction = None  # for analyzer: hacky
-        _landing_path = _download.path
+        _extract = None  # for analyzer: hacky
 
     if not _should_continue:
         logger.info("Stopping pipeline...")
@@ -153,8 +152,8 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to bronze layer...")
     logger.info("=" * 80)
-    _bronze = _manager.to_bronze(landing_path=_landing_path, version=_version)
-    logger.info("Bronze transformation completed", extra=_bronze.to_serializable())
+    _bronze = _manager.to_bronze(_extract if _extract else _ingest)
+    logger.info("Bronze transformation completed", extra=_bronze.model_dump())
 
     # ==============================
     # Step 5: Transform to silver
@@ -162,9 +161,9 @@ if __name__ == "__main__":
     logger.info("=" * 80)
     logger.info("Transforming to silver layer...")
     logger.info("=" * 80)
-    _silver = _manager.to_silver()
+    _silver = _manager.to_silver(_bronze)
 
-    logger.info("Silver transformation completed !", extra=_silver.to_serializable())
+    logger.info("Silver transformation completed !", extra=_silver.model_dump())
 
     logger.info(
         "Pipeline completed successfully !",
@@ -174,21 +173,4 @@ if __name__ == "__main__":
     # ==============================
     # Step 6: Save successful run metadata
     # ==============================
-    if not _extraction:
-        _sha256 = _download.sha256
-        _file_size_mib = _download.size_mib
-    else:
-        _sha256 = _extraction.extracted_file_sha256
-        _file_size_mib = _extraction.size_mib
-
-    PipelineStateManager.update_success(
-        dataset_name=_dataset.name,
-        version=_version,
-        etag=_metadata.remote_file_metadata.etag,
-        last_modified=_metadata.remote_file_metadata.last_modified,
-        content_length=_metadata.remote_file_metadata.content_length,
-        sha256=_sha256,
-        file_size_mib=_file_size_mib,
-        row_count=_silver.row_count,
-        columns=_silver.columns,
-    )
+    PipelineStateManager.update_success(dataset_name=_dataset.name, data=_silver)

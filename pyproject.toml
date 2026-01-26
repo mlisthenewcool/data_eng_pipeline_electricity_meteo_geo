@@ -5,7 +5,7 @@ description = "Data Engineering personnal project"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "duckdb>=1.4.3",
+    "duckdb>=1.4.4",
     "httpx[http2]>=0.27.0",
     "loguru>=0.7.3",
     "polars>=1.37.1",

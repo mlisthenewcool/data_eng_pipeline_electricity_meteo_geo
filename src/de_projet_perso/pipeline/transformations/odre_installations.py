@@ -65,7 +65,7 @@ def transform_silver_odre(latest_bronze_path: Path) -> pl.DataFrame:
     logger.info("Reading from bronze", extra={"path": str(latest_bronze_path)})
     df = pl.read_parquet(latest_bronze_path)
 
-    logger.debug("Applying transformations", extra={"n_rows": len(df), "n_cols": len(df.columns)})
+    logger.info("Applying transformations", extra={"n_rows": len(df), "n_cols": len(df.columns)})
 
     # Select and rename columns to snake_case
     df_renamed = df.select(

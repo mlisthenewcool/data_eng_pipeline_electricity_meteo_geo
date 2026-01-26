@@ -232,7 +232,7 @@ def validate_ign_contours_iris(df: pl.DataFrame) -> None:
     _check_geographic_bounds(df, dataset_name, "centroid_lat", "centroid_lon")
     _check_no_all_nulls(df, dataset_name, ["code_iris", "centroid_lat", "centroid_lon"])
 
-    logger.debug(
+    logger.info(
         f"Silver validation passed for {dataset_name}",
         extra={"rows": len(df), "columns": len(df.columns)},
     )
@@ -281,7 +281,7 @@ def validate_meteo_france_stations(df: pl.DataFrame) -> None:
     _check_geographic_bounds(df, dataset_name, "latitude", "longitude")
     _check_no_all_nulls(df, dataset_name, ["id", "latitude", "longitude"])
 
-    logger.debug(
+    logger.info(
         f"Silver validation passed for {dataset_name}",
         extra={
             "rows": len(df),
@@ -333,7 +333,7 @@ def validate_odre_installations(df: pl.DataFrame) -> None:
     _check_column_types(df, dataset_name, expected_types)
     _check_no_all_nulls(df, dataset_name, ["id_peps", "code_filiere"])
 
-    logger.debug(
+    logger.info(
         f"Silver validation passed for {dataset_name}",
         extra={
             "rows": len(df),

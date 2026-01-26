@@ -44,9 +44,9 @@ SELECT\
     ST_AsWKB(geometrie) AS geom_wkb \
 FROM ST_read(?, layer = 'contours_iris')
 """
-    logger.debug("Executing DuckDB spatial query ...", extra={"query": query})
+    logger.info("Executing DuckDB spatial query ...", extra={"query": query})
     df = conn.execute(query, parameters=[str(landing_path)]).pl()
-    logger.debug("DuckDB spatial query completed", extra={"n_rows": len(df), "columns": df.columns})
+    logger.info("DuckDB spatial query completed", extra={"n_rows": len(df), "columns": df.columns})
     conn.close()
     return df
 
@@ -107,7 +107,7 @@ def transform_silver(latest_bronze_path: Path) -> pl.DataFrame:
     FROM bronze
     """
 
-    logger.debug("Computing centroids with DuckDB spatial extension")
+    logger.info("Computing centroids with DuckDB spatial extension")
     df = conn.execute(query).pl()
     conn.close()
 

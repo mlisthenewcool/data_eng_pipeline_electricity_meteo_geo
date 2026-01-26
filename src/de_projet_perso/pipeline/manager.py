@@ -32,14 +32,15 @@ from de_projet_perso.core.data_catalog import Dataset
 from de_projet_perso.core.file_manager import FileManager
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.path_resolver import PathResolver
+from de_projet_perso.pipeline.constants import PipelineAction
 from de_projet_perso.pipeline.results import (
     BronzeResult,
     CheckMetadataResult,
-    DownloadResult,
-    ExtractionResult,
+    ExtractResult,
+    IngestResult,
     SilverResult,
 )
-from de_projet_perso.pipeline.state import PipelineAction, PipelineStateManager
+from de_projet_perso.pipeline.state import PipelineStateManager
 from de_projet_perso.pipeline.transformations import get_bronze_transform, get_silver_transform
 from de_projet_perso.utils.archive_extractor import extract_7z
 from de_projet_perso.utils.downloader import download_to_file
@@ -75,7 +76,7 @@ class PipelineManager:
         # 1. Fetch remote metadata
         remote_info = get_remote_file_info(
             url=self.dataset.source.url_as_str,
-            timeout=30,  # TODO: mettre dans setting. 30 seconds for HTTP HEAD
+            timeout=30,  # TODO: move to settings
         )
 
         # 2. Load previous state
@@ -87,7 +88,7 @@ class PipelineManager:
 
             return CheckMetadataResult(
                 action=PipelineAction.FIRST_RUN,
-                remote_file_metadata=remote_info,
+                remote_metadata=remote_info,
             )
 
         # 4. Extract previous remote metadata from download stage
@@ -97,9 +98,9 @@ class PipelineManager:
             raise Exception  # TODO: erreur spécifique à créer
 
         previous_remote = RemoteFileInfo(
-            etag=state.last_successful_run.etag,
-            last_modified=state.last_successful_run.last_modified,
-            content_length=state.last_successful_run.content_length,
+            etag=state.last_successful_run.remote_metadata.etag,
+            last_modified=state.last_successful_run.remote_metadata.last_modified,
+            content_length=state.last_successful_run.remote_metadata.content_length,
         )
 
         # 5. Compare remote metadata
@@ -120,7 +121,7 @@ class PipelineManager:
                 },
             )
             # Short-circuit: skip all downstream tasks
-            return CheckMetadataResult(action=PipelineAction.SKIP, remote_file_metadata=remote_info)
+            return CheckMetadataResult(action=PipelineAction.SKIP, remote_metadata=remote_info)
 
         # REFRESH: Remote changed
         logger.info(
@@ -134,12 +135,9 @@ class PipelineManager:
                 ),
             },
         )
-        return CheckMetadataResult(
-            action=PipelineAction.REFRESH,
-            remote_file_metadata=remote_info,
-        )
+        return CheckMetadataResult(action=PipelineAction.REFRESH, remote_metadata=remote_info)
 
-    def download(self, version: str) -> DownloadResult:
+    def ingest(self, version: str, remote_metadata: RemoteFileInfo) -> IngestResult:
         """Download source file from URL.
 
         Downloads to landing directory preserving original filename from server.
@@ -147,20 +145,29 @@ class PipelineManager:
 
         Args:
             version: Version for path resolution (Airflow template or explicit)
+            remote_metadata: todo
 
         Returns:
-            DownloadResult with path, sha256, size, and original_filename
+            IngestResult with remote_metadata, path, sha256, size
         """
         # Get landing directory (not file path - preserves original filename)
         resolver = PathResolver(dataset_name=self.dataset.name)
 
-        return download_to_file(
+        download = download_to_file(
             url=self.dataset.source.url_as_str,
             dest_dir=resolver.landing_dir,
             default_name=f"{version}.{self.dataset.source.format.value}",
         )
 
-    def extract_archive(self, archive_path: Path) -> ExtractionResult:
+        return IngestResult(
+            version=version,
+            remote_metadata=remote_metadata,
+            path=download.path,
+            sha256=download.sha256,
+            size_mib=download.size_mib,
+        )
+
+    def extract_archive(self, ingest_result: IngestResult) -> ExtractResult:
         """Extract archive and recalculate SHA256.
 
         For archive formats (7z):
@@ -169,30 +176,28 @@ class PipelineManager:
             3. Return both archive SHA256 (for traceability) and extracted SHA256
 
         Args:
-            archive_path: Path to archive file (or direct file if not archive)
+            ingest_result: todo
 
         Returns:
-            ExtractionResult with extracted file info, dual SHA256 tracking, and original filename
+            ExtractResult todo
 
         Raises:
             ValueError: If archive format requires inner_file but none specified
             FileNotFoundError: If extracted file doesn't exist after extraction
         """
-        if not self.dataset.source.format.is_archive:
+        if not self.dataset.source.format.is_archive or not self.dataset.source.inner_file:
             logger.warning(
                 f"Trying to extract a non-archive format: {self.dataset.source.format.value}"
             )
-            raise Exception  # TODO exception spécifique
-
-        if self.dataset.source.inner_file is None:
             raise ValueError(
-                f"inner_file required for archive format: {self.dataset.source.format}"
-            )
+                "Dataset {self.dataset.name} is not an archive or missing inner_file"
+            )  # TODO exception spécifique
 
         # Extract to same directory as archive (preserves directory structure)
+        archive_path = ingest_result.path
         landing_dir = archive_path.parent
 
-        file_info = extract_7z(
+        extract_info = extract_7z(
             archive_path=archive_path,
             target_filename=self.dataset.source.inner_file,
             dest_dir=landing_dir,
@@ -203,22 +208,20 @@ class PipelineManager:
             "Extraction completed with integrity check",
             extra={
                 "archive_path": archive_path,
-                "extracted_file_path": file_info.path,
-                "extracted_file_sha256": file_info.sha256,
-                "size_mib": file_info.size_mib,
+                "extracted_file_path": extract_info.path,
+                "extracted_file_sha256": extract_info.sha256,
+                "extracted_file_size_mib": extract_info.size_mib,
             },
         )
 
-        return ExtractionResult(
-            archive_path=archive_path,
-            extracted_file_path=file_info.path,
-            extracted_file_sha256=file_info.sha256,
-            size_mib=file_info.size_mib,
+        return ExtractResult(
+            **ingest_result.model_dump(),
+            extracted_file_path=extract_info.path,
+            extracted_file_sha256=extract_info.sha256,
+            extracted_file_size_mib=extract_info.size_mib,
         )
 
-    def has_hash_changed(
-        self, download_or_extract_result: DownloadResult | ExtractionResult
-    ) -> bool:
+    def has_hash_changed(self, result: IngestResult | ExtractResult) -> bool:
         """Download file and check if SHA256 has changed (Smart Skip #2).
 
         This task downloads the file and compares its SHA256 with the previous
@@ -227,14 +230,12 @@ class PipelineManager:
         all downstream processing and clean up the downloaded file.
 
         Args:
-            download_or_extract_result: ...
+            result: todo
 
         Returns:
             dict: Updated PipelineContext if SHA256 changed (continue processing)
             bool: False to short-circuit if SHA256 unchanged (SKIP downstream)
         """
-        # TODO: passer seulement le hash en paramètre et laisser la task Airflow nettoyer les
-        #  fichiers car il serait mieux de séparer les deux DAGs
         state = PipelineStateManager.load(self.dataset.name)
 
         if not state or not state.last_successful_run:
@@ -244,12 +245,11 @@ class PipelineManager:
         # find the correct hash to compare with
         # for an archive, compare the target file hash and not the archive
         # because other files could change in archive but not that specific target file
-        if isinstance(download_or_extract_result, ExtractionResult):
-            known_sha256 = download_or_extract_result.extracted_file_sha256
-        else:
-            known_sha256 = download_or_extract_result.sha256
+        current_hash = (
+            result.extracted_file_sha256 if isinstance(result, ExtractResult) else result.sha256
+        )
 
-        if known_sha256 != state.last_successful_run.sha256:
+        if current_hash != state.last_successful_run.sha256:
             logger.info(f"Hash changed for {self.dataset.name}: processing new data")
             return True
 
@@ -258,11 +258,9 @@ class PipelineManager:
 
         # Cleanup downloaded file (duplicate)
         try:
-            if isinstance(download_or_extract_result, ExtractionResult):
-                download_or_extract_result.archive_path.unlink()
-                download_or_extract_result.extracted_file_path.unlink()
-            else:
-                download_or_extract_result.path.unlink()
+            result.path.unlink()
+            if isinstance(result, ExtractResult):
+                result.extracted_file_path.unlink()
         except Exception as e:
             logger.warning(
                 "Failed to remove duplicate file (non-critical)", extra={"error": str(e)}
@@ -275,7 +273,7 @@ class PipelineManager:
     # Transformations
     # =============================================================================
 
-    def to_bronze(self, landing_path: Path, version: str) -> BronzeResult:
+    def to_bronze(self, result: IngestResult | ExtractResult) -> BronzeResult:
         """Convert landing file to Parquet with normalized column names.
 
         Bronze layer transformations:
@@ -286,8 +284,7 @@ class PipelineManager:
         5. Delete landing file
 
         Args:
-            landing_path: Path to landing file (with original filename)
-            version: Version for this run (e.g., "2025-01-21" or "20250121T143022")
+            result: todo
 
         Returns:
             BronzeResult with row count and columns
@@ -297,15 +294,15 @@ class PipelineManager:
         """
         resolver = PathResolver(dataset_name=self.dataset.name)
 
-        bronze_path = resolver.bronze_path(version)
+        bronze_path = resolver.bronze_path(result.version)
         bronze_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(
             f"Converting to bronze for {self.dataset.name}",
             extra={
-                "landing_path": str(landing_path),
-                "bronze_path": str(bronze_path),
-                "version": version,
+                "landing_path": result.landing_path,
+                "bronze_path": bronze_path,
+                "version": result.version,
             },
         )
 
@@ -317,12 +314,12 @@ class PipelineManager:
             )
 
         # Apply the transformations
-        df = transforms(landing_path)
+        df = transforms(result.landing_path)
         df.write_parquet(bronze_path)
 
         # Update latest symlink to point to this version
         file_manager = FileManager(resolver)
-        file_manager.update_bronze_latest_link(version)
+        file_manager.update_bronze_latest_link(result.version)
 
         # Cleanup all landing files (inside the landing directories)
         if resolver.landing_dir.exists() and resolver.landing_dir.is_dir():
@@ -330,20 +327,27 @@ class PipelineManager:
 
         columns = df.columns
         row_count = len(df)
+        parquet_size = bronze_path.stat().st_size / (1024 * 1024)
 
         logger.info(
             f"Bronze conversion complete for {self.dataset.name}",
             extra={
-                "n_rows": row_count,
-                "n_columns": len(columns),
+                "parquet_file_size": parquet_size,
+                "row_count": row_count,
+                "columns": columns,
                 "bronze_path": bronze_path,
                 "latest_link": resolver.bronze_latest_path,
             },
         )
 
-        return BronzeResult(row_count=row_count, columns=columns)
+        return BronzeResult(
+            **result.model_dump(),
+            parquet_file_size_mib=parquet_size,
+            row_count=row_count,
+            columns=columns,
+        )
 
-    def to_silver(self) -> SilverResult:
+    def to_silver(self, bronze_result: BronzeResult) -> SilverResult:
         """Apply business transformations to create silver layer.
 
         Silver layer transformations:
@@ -388,15 +392,22 @@ class PipelineManager:
 
         columns = df.columns
         row_count = len(df)
+        parquet_size = resolver.silver_current_path.stat().st_size / (1024 * 1024)
 
         logger.info(
             f"Silver transformation complete for {self.dataset.name}",
             extra={
-                "n_rows": row_count,
-                "n_columns": len(columns),
+                "parquet_file_size_mib": parquet_size,
+                "row_count": row_count,
+                "len_columns": len(columns),
                 "silver_current": resolver.silver_current_path,
                 "silver_backup": resolver.silver_backup_path,
             },
         )
 
-        return SilverResult(row_count=row_count, columns=df.columns)
+        return SilverResult(
+            **bronze_result.model_dump(),
+            silver_parquet_file_size_mib=parquet_size,
+            silver_row_count=row_count,
+            silver_columns=columns,
+        )

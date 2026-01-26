@@ -80,12 +80,12 @@ def transform_silver(latest_bronze_path: Path) -> pl.DataFrame:
     logger.info("Reading from bronze", extra={"path": str(latest_bronze_path)})
     df = pl.read_parquet(latest_bronze_path)
 
-    logger.debug("Filtering active stations", extra={"total_stations": len(df)})
+    logger.info("Filtering active stations", extra={"total_stations": len(df)})
 
     # Filter to active stations only
     df_active = df.filter((pl.col("dateFin").is_null()) | (pl.col("dateFin") == ""))
 
-    logger.debug("Active stations filtered", extra={"active_stations": len(df_active)})
+    logger.info("Active stations filtered", extra={"active_stations": len(df_active)})
 
     # Extract the latest position (the one with empty dateFin)
     # positions is a List of Structs with latitude, longitude, altitude, dateDebut, dateFin

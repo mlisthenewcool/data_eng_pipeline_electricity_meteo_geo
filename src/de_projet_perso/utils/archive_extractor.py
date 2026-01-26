@@ -20,6 +20,32 @@ from de_projet_perso.core.settings import settings
 from de_projet_perso.utils.hasher import FileHasher
 
 
+@dataclass(frozen=True)
+class ExtractionResult:
+    """Result from archive extraction.
+
+    Attributes:
+        archive_path: Path to extracted file (or original if not archive)
+        extracted_file_path: SHA256 of the final extracted file
+        extracted_file_sha256: SHA256 of the source archive (for traceability)
+        size_mib: File size in mebibytes
+    """
+
+    archive_path: Path
+    extracted_file_path: Path
+    extracted_file_sha256: str
+    size_mib: float
+
+    def to_dict(self) -> dict[str, str | float]:
+        """Convert to dict for serialization."""
+        return {
+            "archive_path": str(self.archive_path),
+            "extracted_file_path": str(self.extracted_file_path),
+            "extracted_file_sha256": self.extracted_file_sha256,
+            "size_mib": self.size_mib,
+        }
+
+
 class TqdmExtractCallback(ExtractCallback):
     """Bridge between py7zr extraction and tqdm progress bar."""
 
@@ -145,7 +171,7 @@ def extract_7z(
     if not archive_path.exists():
         raise ArchiveNotFoundError(archive_path)
 
-    logger.debug(
+    logger.info(
         "Starting extraction",
         extra={"archive": archive_path.name, "target": target_filename},
     )
@@ -163,7 +189,7 @@ def extract_7z(
             except StopIteration:
                 raise FileNotFoundInArchiveError(target_filename, archive_path)
 
-            logger.debug(f"Found target in archive: {target_internal_path}")
+            logger.info(f"Found target in archive: {target_internal_path}")
 
             # Récupérer les infos du fichier pour connaître sa taille décompressée
             target_info = next(
@@ -213,7 +239,7 @@ def extract_7z(
             extracted_file_hash = FileHasher.hash_file(dest_path)
             size_mib = round(dest_path.stat().st_size / 1024**2, 2)
 
-            logger.debug(
+            logger.info(
                 "Extraction completed",
                 extra={
                     "path": dest_path,

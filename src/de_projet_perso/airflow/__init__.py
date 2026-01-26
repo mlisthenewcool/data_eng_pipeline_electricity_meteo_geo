@@ -1,1 +1,1 @@
-"""Airflow integration module for de_projet_perso."""
+"""Airflow integration module."""

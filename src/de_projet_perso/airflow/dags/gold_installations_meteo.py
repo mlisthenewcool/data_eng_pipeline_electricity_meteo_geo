@@ -18,10 +18,10 @@ from typing import Any
 from airflow.sdk import AssetAny, Metadata, dag, task
 
 from de_projet_perso.airflow.assets import (
-    IGN_CONTOURS_IRIS_SILVER,
-    INSTALLATIONS_METEO_GOLD,
-    METEO_FRANCE_STATIONS_SILVER,
-    ODRE_INSTALLATIONS_SILVER,
+    ASSET_GOLD_INSTALLATIONS_METEO,
+    ASSET_SILVER_IGN_CONTOURS_IRIS,
+    ASSET_SILVER_METEO_FRANCE_STATIONS,
+    ASSET_SILVER_ODRE_INSTALLATIONS,
 )
 from de_projet_perso.core.file_manager import FileManager
 from de_projet_perso.core.logger import logger
@@ -73,7 +73,9 @@ SILVER_DATASETS = [
     description="Join renewable installations with nearest weather stations (solar/wind)",
     # AssetAny: triggered when ANY of the 3 Silver assets is updated
     schedule=AssetAny(
-        ODRE_INSTALLATIONS_SILVER, IGN_CONTOURS_IRIS_SILVER, METEO_FRANCE_STATIONS_SILVER
+        ASSET_SILVER_ODRE_INSTALLATIONS,
+        ASSET_SILVER_IGN_CONTOURS_IRIS,
+        ASSET_SILVER_METEO_FRANCE_STATIONS,
     ),
     start_date=datetime(2026, 1, 1),
     catchup=False,
@@ -155,7 +157,7 @@ def gold_installations_meteo_dag():
                 )
 
             paths[dataset_name] = str(silver_path)
-            logger.debug(
+            logger.info(
                 f"Validated Silver exists: {dataset_name}",
                 extra={
                     "path": str(silver_path),
@@ -169,7 +171,7 @@ def gold_installations_meteo_dag():
         )
         return paths
 
-    @task(outlets=[INSTALLATIONS_METEO_GOLD])
+    @task(outlets=[ASSET_GOLD_INSTALLATIONS_METEO])
     def transform_and_save(silver_paths: dict[str, str]):
         """Run Gold transformation and save with backup rotation.
 
@@ -226,7 +228,7 @@ def gold_installations_meteo_dag():
 
         # Emit Asset metadata for Airflow UI
         yield Metadata(
-            asset=INSTALLATIONS_METEO_GOLD,
+            asset=ASSET_GOLD_INSTALLATIONS_METEO,
             extra={
                 "row_count": n_total,
                 "with_station": n_with_station,

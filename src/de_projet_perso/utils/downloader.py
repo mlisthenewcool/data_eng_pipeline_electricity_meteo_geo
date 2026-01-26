@@ -16,6 +16,7 @@ Example:
 
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -24,8 +25,30 @@ from tqdm import tqdm
 
 from de_projet_perso.core.logger import TqdmToLoguru, logger
 from de_projet_perso.core.settings import settings
-from de_projet_perso.pipeline.results import DownloadResult
 from de_projet_perso.utils.hasher import FileHasher
+
+
+@dataclass(frozen=True)
+class DownloadResult:
+    """Result from HTTP download operation.
+
+    Attributes:
+        path: Path to downloaded file (archive or final file)
+        sha256: SHA256 hash of downloaded content
+        size_mib: File size in mebibytes
+    """
+
+    path: Path
+    sha256: str
+    size_mib: float
+
+    def to_dict(self) -> dict[str, str | float]:
+        """Convert to dict for serialization."""
+        return {
+            "path": str(self.path),
+            "sha256": self.sha256,
+            "size_mib": self.size_mib,
+        }
 
 
 def extract_filename_from_response(response: httpx.Response, url: str) -> str | None:
@@ -67,7 +90,7 @@ def extract_filename_from_response(response: httpx.Response, url: str) -> str | 
             # Remove any path separators for security
             filename = Path(filename).name
             if filename and filename != ".":
-                logger.debug(
+                logger.info(
                     "Extracted filename from Content-Disposition",
                     extra={"filename": filename, "header": content_disp},
                 )
@@ -81,7 +104,7 @@ def extract_filename_from_response(response: httpx.Response, url: str) -> str | 
 
         # check if it's an actual file and not a folder
         if filename and filename != "." and "." in filename:
-            logger.debug(
+            logger.info(
                 "Extracted filename from URL path", extra={"filename": filename, "url": url}
             )
             return filename
@@ -120,7 +143,7 @@ def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadRes
         ... # File saved to: /data/landing/ign_contours_iris/CONTOURS-IRIS_3-0...7z
         ... print(f"Downloaded {result.original_filename}: {result.size_mib} MiB")
     """
-    logger.debug("Starting download", extra={"url": url, "dest_dir": dest_dir})
+    logger.info("Starting download", extra={"url": url, "dest_dir": dest_dir})
 
     # TODO, documenter & ajouter arguments write/pool
     timeout = httpx.Timeout(
@@ -176,14 +199,16 @@ def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadRes
 
             sha256_result = hasher.hexdigest
 
-            logger.debug(
+            size_mib = total_bytes / (1024 * 1024)
+
+            logger.info(
                 "Download completed",
                 extra={
                     "path": dest_path,
                     "original_filename": original_filename,
-                    "size_mib": round(total_bytes / (1024**2), 2),
+                    "size_mib": size_mib,
                     "sha256": sha256_result,
                 },
             )
 
-            return DownloadResult(path=dest_path, sha256=sha256_result, size_mib=total_bytes)
+            return DownloadResult(path=dest_path, sha256=sha256_result, size_mib=size_mib)
