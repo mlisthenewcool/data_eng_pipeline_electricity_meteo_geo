@@ -29,7 +29,7 @@ from de_projet_perso.utils.hasher import FileHasher
 
 
 @dataclass(frozen=True)
-class DownloadResult:
+class HttpDownloadResult:
     """Result from HTTP download operation.
 
     Attributes:
@@ -113,7 +113,7 @@ def extract_filename_from_response(response: httpx.Response, url: str) -> str | 
     return None
 
 
-def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadResult:
+def download_to_file(url: str, dest_dir: Path, default_name: str) -> HttpDownloadResult:
     """Download a file from URL with streaming, progress bar, and SHA256.
 
     Performs memory-efficient download by streaming chunks to disk.
@@ -129,7 +129,7 @@ def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadRes
         default_name: Default name to fallback if any filename could be extracted from server.
 
     Returns:
-        DownloadResult with path, sha256, size_mib, and original_filename.
+        HttpDownloadResult with path, sha256, size_mib, and original_filename.
 
     Raises:
         httpx.HTTPStatusError: If server returns error status (4xx/5xx).
@@ -211,4 +211,4 @@ def download_to_file(url: str, dest_dir: Path, default_name: str) -> DownloadRes
                 },
             )
 
-            return DownloadResult(path=dest_path, sha256=sha256_result, size_mib=size_mib)
+            return HttpDownloadResult(path=dest_path, sha256=sha256_result, size_mib=size_mib)

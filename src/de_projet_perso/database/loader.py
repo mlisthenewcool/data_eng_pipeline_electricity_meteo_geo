@@ -25,18 +25,15 @@ Alternative strategies (not implemented):
 """
 
 import re
-from datetime import date
-from importlib.resources import files
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 from psycopg import sql
 
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.path_resolver import PathResolver
+from de_projet_perso.core.settings import settings
 from de_projet_perso.database.connection import DatabaseConnection
-from de_projet_perso.database.tables import TABLES, TableConfig, get_table_config
 
 
 class PostgresLoader:
@@ -64,7 +61,7 @@ class PostgresLoader:
     """
 
     # Path to SQL files within the package
-    SQL_PACKAGE = "de_projet_perso.database.sql"
+    SQL_PACKAGE = settings.root_dir / "postgres"  # todo
 
     def __init__(self, connection: DatabaseConnection | None = None) -> None:
         """Initialize the loader.
@@ -87,15 +84,12 @@ class PostgresLoader:
         Raises:
             FileNotFoundError: If SQL file not found
         """
-        sql_files = files(self.SQL_PACKAGE).joinpath(category)
-        sql_path = sql_files.joinpath(f"{name}.sql")
+        sql_path = self.SQL_PACKAGE / category / f"{name}.sql"
 
-        try:
-            return sql_path.read_text()
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"SQL file not found: {category}/{name}.sql. Expected at: {sql_path}"
-            ) from None
+        if not sql_path.exists():
+            raise FileNotFoundError(f"SQL file not found. Expected at: {sql_path}")
+
+        return sql_path.read_text(encoding="utf-8")
 
     def _sql_exists(self, category: str, name: str) -> bool:
         """Check if a SQL file exists.
@@ -107,25 +101,22 @@ class PostgresLoader:
         Returns:
             True if SQL file exists
         """
-        try:
-            self._load_sql(category, name)
-            return True
-        except FileNotFoundError:
-            return False
+        sql_path = self.SQL_PACKAGE / category / f"{name}.sql"
+        return sql_path.exists()
 
-    def initialize_schema(self) -> None:
-        """Initialize database schema (create schemas only).
-
-        Executes the schema creation SQL file.
-        Safe to run multiple times (uses IF NOT EXISTS).
-        """
-        logger.info("Initializing database schemas")
-
-        with self._connection.cursor() as cur:
-            sql_content = self._load_sql("schema", "01_create_schemas")
-            cur.execute(sql_content.encode("utf-8"))
-
-        logger.info("Database schemas initialized successfully")
+    # def initialize_schema(self) -> None:
+    #     """Initialize database schema (create schemas only).
+    #
+    #     Executes the schema creation SQL file.
+    #     Safe to run multiple times (uses IF NOT EXISTS).
+    #     """
+    #     logger.info("Initializing database schemas")
+    #
+    #     with self._connection.cursor() as cur:
+    #         sql_content = self._load_sql("schema", "01_create_schemas")
+    #         cur.execute(sql_content.encode("utf-8"))
+    #
+    #     logger.info("Database schemas initialized successfully")
 
     def initialize_silver_tables(self) -> None:
         """Initialize all Silver layer tables.
@@ -159,7 +150,7 @@ class PostgresLoader:
         Convenience method that calls initialize_schema() and initialize_silver_tables().
         Safe to run multiple times (uses IF NOT EXISTS).
         """
-        self.initialize_schema()
+        # self.initialize_schema()
         self.initialize_silver_tables()
 
     # =========================================================================
@@ -177,9 +168,10 @@ class PostgresLoader:
         """
         return self._sql_exists("upsert/silver", dataset_name)
 
-    def load_silver(
+    def load(
         self,
         dataset_name: str,
+        layer: str,
         parquet_path: Path | None = None,
     ) -> int:
         """Load Silver parquet to PostgreSQL using COPY + staging table.
@@ -199,6 +191,7 @@ class PostgresLoader:
 
         Args:
             dataset_name: Dataset identifier (e.g., "meteo_france_stations")
+            layer: todo.
             parquet_path: Path to parquet file. If None, uses silver/current.parquet.
 
         Returns:
@@ -316,133 +309,3 @@ class PostgresLoader:
             if not line.strip().startswith("-- @"):
                 lines.append(line)
         return "\n".join(lines)
-
-    # =========================================================================
-    # Legacy table-based loading (for Gold layer compatibility)
-    # =========================================================================
-
-    def _prepare_row(self, row: dict[str, Any], config: TableConfig) -> dict[str, Any]:
-        """Prepare a row for insertion, applying column mappings and conversions.
-
-        Args:
-            row: Raw row data from Parquet
-            config: Table configuration
-
-        Returns:
-            Prepared row with proper types for PostgreSQL
-        """
-        prepared = {}
-
-        for col, value in row.items():
-            # Skip excluded columns
-            if col in config.exclude_columns:
-                continue
-
-            # Apply column mapping if defined
-            target_col = config.column_mapping.get(col, col)
-
-            # Convert types as needed
-            if isinstance(value, date):
-                # psycopg handles date objects natively
-                prepared[target_col] = value
-            elif isinstance(value, list):
-                # Convert list to PostgreSQL array format
-                prepared[target_col] = value
-            elif value is None:
-                prepared[target_col] = None
-            else:
-                prepared[target_col] = value
-
-        return prepared
-
-    def load_table(
-        self,
-        table_name: str,
-        parquet_path: Path | None = None,
-    ) -> int:
-        """Load data from Parquet to PostgreSQL using UPSERT.
-
-        Args:
-            table_name: Fully qualified table name (e.g., 'ref.stations_meteo')
-            parquet_path: Path to Parquet file. If None, uses default from config.
-
-        Returns:
-            Number of rows processed
-
-        Raises:
-            KeyError: If table configuration not found
-            FileNotFoundError: If Parquet file or SQL file not found
-        """
-        config = get_table_config(table_name)
-
-        # Get source path
-        source_path = parquet_path or config.get_source_path()
-        if not source_path.exists():
-            raise FileNotFoundError(f"Parquet file not found: {source_path}")
-
-        logger.info(
-            f"Loading data to {table_name}",
-            extra={
-                "source": str(source_path),
-                "table": table_name,
-            },
-        )
-
-        # Read Parquet file
-        df = pl.read_parquet(source_path)
-        row_count = len(df)
-
-        logger.debug(f"Read {row_count:,} rows from Parquet")
-
-        # Load UPSERT SQL
-        upsert_sql = self._load_sql("upsert", config.sql_file_name)
-
-        # Convert to list of dicts and prepare rows
-        rows = df.to_dicts()
-        prepared_rows = [self._prepare_row(row, config) for row in rows]
-
-        # Execute UPSERT in batches
-        batch_size = 1000
-        rows_affected = 0
-
-        with self._connection.cursor() as cur:
-            for i in range(0, len(prepared_rows), batch_size):
-                batch = prepared_rows[i : i + batch_size]
-                # Use bytes to satisfy psycopg's Query type (accepts bytes)
-                cur.executemany(upsert_sql.encode("utf-8"), batch)
-                rows_affected += len(batch)
-
-                if (i + batch_size) % 10000 == 0:
-                    logger.debug(f"Processed {i + batch_size:,} rows")
-
-        logger.info(
-            f"Loaded {rows_affected:,} rows to {table_name}",
-            extra={
-                "table": table_name,
-                "rows_affected": rows_affected,
-            },
-        )
-
-        return rows_affected
-
-    def load_all_tables(self) -> dict[str, int]:
-        """Load all configured tables.
-
-        Returns:
-            Dictionary mapping table names to rows processed
-        """
-        results = {}
-
-        # Load ref tables first (for foreign key constraints)
-        ref_tables = [t for t in TABLES if t.startswith("ref.")]
-        gold_tables = [t for t in TABLES if t.startswith("gold.")]
-
-        for table_name in ref_tables + gold_tables:
-            try:
-                rows = self.load_table(table_name)
-                results[table_name] = rows
-            except Exception as e:
-                logger.error(f"Failed to load {table_name}: {e}")
-                raise
-
-        return results

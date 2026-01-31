@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.19.5"
+__generated_with = "0.19.6"
 app = marimo.App(width="full")
 
 
@@ -17,7 +17,11 @@ def _():
 
 @app.cell
 def _(Path, pl, settings):
-    _path = settings.data_dir_path / "meteo_france_info_stations_depuis_data_gouv.json"
+    _path = (
+        settings.data_dir_path
+        / "0_pour_investigations"
+        / "meteo_france_info_stations_depuis_data_gouv.json"
+    )
 
     def read_df(path: Path) -> pl.DataFrame:
         return pl.read_json(path)

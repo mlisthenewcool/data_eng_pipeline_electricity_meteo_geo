@@ -16,3 +16,22 @@
           autre chose ?) en ajoutant l'identifiant de la station météo la plus proche qui mesure les bons paramètres
           (photovoltaïque ou éolien par exemple)
         - liste des stations météo (identifiants) pour passer les appels à l'API de Météo France
+
+
+- librairies de data quality
+    - great-expectations
+      Downloads last day: 900,933
+      Downloads last week: 5,615,927
+      Downloads last month: 23,241,552
+    - pandera
+      Downloads last day: 445,932
+      Downloads last week: 2,330,197
+      Downloads last month: 9,007,937
+    - soda-core
+      Downloads last day: 125,188
+      Downloads last week: 687,357
+      Downloads last month: 2,605,239
+    - dbt-core
+      Downloads last day: 2,877,110
+      Downloads last week: 18,695,417
+      Downloads last month: 72,206,306 

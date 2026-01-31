@@ -9,7 +9,8 @@
 - [ ] **DAG de maintenance** : Nettoyage hebdomadaire des anciennes versions Bronze
 - [ ] **State management**
     - [x] Documenter le choix actuel du fichier JSON par dataset
-    - [ ] Regarder si possibilité de remplacer le JSON par les métadonnées émises pour l'asset (Metadata couche silver)
+    - [x] Regarder si possibilité de remplacer le JSON par les métadonnées émises pour l'asset (Metadata couche silver)
+    - [ ] Passage aux Metadata pour le state management
     - [ ] DAG ou task de vérification avant chaque DAG d'ingestion ?
     - → check_state
         - → si ok → check_should_run
@@ -22,6 +23,7 @@
     - [ ] eco2mix : def (une seule fois), cons (une fois par jour), tr (une fois par heure)
     - [ ] meteo_observations & meteo_climatologie
 - [ ] Simplification de nommage des fichiers bronze (heure max)
+- [ ] Séparation du DAG ingestion jusqu'au fichier parquet silver du DAG insertion dans Postgres
 
 ## Phase 2 : Pipeline Robustesse
 

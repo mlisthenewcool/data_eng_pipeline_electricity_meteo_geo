@@ -12,24 +12,17 @@ Output:
 """
 
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any
 
+import polars as pl
 from airflow.sdk import AssetAny, Metadata, dag, task
 
-from de_projet_perso.airflow.assets import (
-    ASSET_GOLD_INSTALLATIONS_METEO,
-    ASSET_SILVER_IGN_CONTOURS_IRIS,
-    ASSET_SILVER_METEO_FRANCE_STATIONS,
-    ASSET_SILVER_ODRE_INSTALLATIONS,
-)
-from de_projet_perso.core.file_manager import FileManager
+from de_projet_perso.airflow.assets import ASSETS_GOLD, ASSETS_SILVER
+from de_projet_perso.core.data_catalog import DataCatalog, DatasetDerivedConfig
 from de_projet_perso.core.logger import logger
-from de_projet_perso.core.path_resolver import PathResolver
+from de_projet_perso.core.settings import settings
 from de_projet_perso.database.loader import PostgresLoader
-from de_projet_perso.pipeline.transformations.gold.installations_meteo import (
-    transform_gold_installations_meteo,
-)
+from de_projet_perso.pipeline.derived_manager import DerivedDatasetPipeline
 
 # =============================================================================
 # Configuration
@@ -45,12 +38,13 @@ DEFAULT_ARGS: dict[str, Any] = {
     "depends_on_past": False,
 }
 
-# Silver datasets required for this Gold transformation
-SILVER_DATASETS = [
-    "odre_installations",
-    "ign_contours_iris",
-    "meteo_france_stations",
-]
+# Load Gold dataset from catalog
+_catalog = DataCatalog.load(settings.data_catalog_file_path)
+_gold_dataset_config = _catalog.get_dataset("installations_meteo")
+assert isinstance(_gold_dataset_config, DatasetDerivedConfig), (
+    "installations_meteo must be a derived dataset"
+)
+_gold_dataset: DatasetDerivedConfig = _gold_dataset_config
 
 # =============================================================================
 # Assets Definition (imported from centralized assets.py)
@@ -73,9 +67,9 @@ SILVER_DATASETS = [
     description="Join renewable installations with nearest weather stations (solar/wind)",
     # AssetAny: triggered when ANY of the 3 Silver assets is updated
     schedule=AssetAny(
-        ASSET_SILVER_ODRE_INSTALLATIONS,
-        ASSET_SILVER_IGN_CONTOURS_IRIS,
-        ASSET_SILVER_METEO_FRANCE_STATIONS,
+        ASSETS_SILVER["odre_installations"],
+        ASSETS_SILVER["ign_contours_iris"],
+        ASSETS_SILVER["meteo_france_stations"],
     ),
     start_date=datetime(2026, 1, 1),
     catchup=False,
@@ -131,89 +125,35 @@ Schema validation is delegated to the Silver layer (fail-fast at source).
 def gold_installations_meteo_dag():
     """Gold DAG for installations_meteo transformation."""
 
-    @task
-    def validate_silver_inputs() -> dict[str, str]:
-        """Validate all Silver input files exist.
+    @task(outlets=[ASSETS_GOLD["installations_meteo"]])
+    def transform_to_gold():
+        """Execute Gold transformation using DerivedDatasetPipeline.
 
-        Returns:
-            Dict mapping dataset names to their Silver file paths
-
-        Raises:
-            FileNotFoundError: If any Silver file is missing
-        """
-        logger.info("Validating Silver inputs existence")
-
-        paths: dict[str, str] = {}
-
-        for dataset_name in SILVER_DATASETS:
-            resolver = PathResolver(dataset_name)
-            silver_path = resolver.silver_current_path
-
-            if not silver_path.exists():
-                raise FileNotFoundError(
-                    f"Silver file not found for '{dataset_name}': {silver_path}. "
-                    f"Ensure the Silver pipeline has run successfully before "
-                    f"triggering the Gold transformation."
-                )
-
-            paths[dataset_name] = str(silver_path)
-            logger.info(
-                f"Validated Silver exists: {dataset_name}",
-                extra={
-                    "path": str(silver_path),
-                    "size_mb": silver_path.stat().st_size / 1024 / 1024,
-                },
-            )
-
-        logger.info(
-            "All Silver inputs validated",
-            extra={"datasets": list(paths.keys())},
-        )
-        return paths
-
-    @task(outlets=[ASSET_GOLD_INSTALLATIONS_METEO])
-    def transform_and_save(silver_paths: dict[str, str]):
-        """Run Gold transformation and save with backup rotation.
-
-        Args:
-            silver_paths: Dict of validated Silver paths from validate task
+        Uses the new DerivedDatasetPipeline which:
+        - Validates all Silver dependencies exist
+        - Executes the registered transformation
+        - Handles backup rotation automatically
 
         Yields:
             Metadata for the Gold Asset
         """
-        logger.info("Starting Gold transformation: installations_meteo")
+        # Create manager from catalog dataset
+        manager = DerivedDatasetPipeline(_gold_dataset)
 
-        # Run transformation with validated paths
-        df_gold = transform_gold_installations_meteo(
-            odre_silver_path=Path(silver_paths["odre_installations"]),
-            ign_silver_path=Path(silver_paths["ign_contours_iris"]),
-            meteo_silver_path=Path(silver_paths["meteo_france_stations"]),
-        )
+        # Execute transformation (validates dependencies + transforms + saves)
+        result = manager.to_gold()
 
-        # Setup Gold layer paths
-        resolver = PathResolver("installations_meteo")
-        file_manager = FileManager(resolver)
-
-        # Ensure directory exists
-        resolver._gold_dir.mkdir(parents=True, exist_ok=True)
-
-        # Rotate: current -> backup (preserves previous version)
-        file_manager.rotate_gold()
-
-        # Write new current
-        df_gold.write_parquet(resolver.gold_current_path)
-
-        # Compute statistics for logging and metadata
-        n_total = len(df_gold)
+        # Compute additional statistics for logging
+        df_gold = pl.read_parquet(result.path)
+        n_total = result.row_count
         n_with_station = int(df_gold["station_meteo_id"].is_not_null().sum())
         n_without_station = n_total - n_with_station
         n_solaire = len(df_gold.filter(df_gold["type_energie"] == "solaire"))
         n_eolien = len(df_gold.filter(df_gold["type_energie"] == "eolien"))
         coverage_pct = round(n_with_station / n_total * 100, 1) if n_total > 0 else 0
-        file_size_mb = round(resolver.gold_current_path.stat().st_size / 1024 / 1024, 2)
 
         logger.info(
-            "Gold transformation completed",
+            "Gold pipeline completed",
             extra={
                 "total_installations": n_total,
                 "with_station": n_with_station,
@@ -221,14 +161,14 @@ def gold_installations_meteo_dag():
                 "coverage_pct": coverage_pct,
                 "solaire": n_solaire,
                 "eolien": n_eolien,
-                "file_size_mb": file_size_mb,
-                "output_path": str(resolver.gold_current_path),
+                "file_size_mb": result.file_size_mib,
+                "dependencies": result.dependencies,
             },
         )
 
         # Emit Asset metadata for Airflow UI
         yield Metadata(
-            asset=ASSET_GOLD_INSTALLATIONS_METEO,
+            asset=ASSETS_GOLD["installations_meteo"],
             extra={
                 "row_count": n_total,
                 "with_station": n_with_station,
@@ -236,7 +176,8 @@ def gold_installations_meteo_dag():
                 "coverage_pct": coverage_pct,
                 "solaire_count": n_solaire,
                 "eolien_count": n_eolien,
-                "file_size_mb": file_size_mb,
+                "file_size_mb": result.file_size_mib,
+                "dependencies": ", ".join(result.dependencies),  # Convert list to string
             },
         )
 
@@ -249,13 +190,15 @@ def gold_installations_meteo_dag():
         """
         logger.info("Loading Gold installations_meteo to PostgreSQL")
 
-        loader = PostgresLoader()
+        _loader = PostgresLoader()
 
         # Ensure schema exists (idempotent)
-        loader.initialize_schema()
+        # loader.initialize_schema()
 
         # Load Gold table
-        rows = loader.load_table("gold.installations_meteo")
+        # TODO
+        # rows = loader.load("installations_meteo", "gold")
+        rows = 0
 
         logger.info(
             "PostgreSQL load completed",
@@ -263,10 +206,8 @@ def gold_installations_meteo_dag():
         )
         return rows
 
-    # Task dependencies: validate -> transform -> load_to_postgres
-    silver_paths = validate_silver_inputs()
-    # type: ignore below - XComArg is resolved to dict at runtime by Airflow
-    transform_and_save(silver_paths) >> load_to_postgres()  # type: ignore[arg-type]
+    # Task dependencies: transform -> load_to_postgres
+    transform_to_gold() >> load_to_postgres()
 
 
 # =============================================================================

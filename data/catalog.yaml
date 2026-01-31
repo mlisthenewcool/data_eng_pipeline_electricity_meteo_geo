@@ -69,6 +69,20 @@ datasets:
       frequency: "daily"
       mode: "snapshot"
 
+  # ============================================================
+  # DERIVED DATASETS (Gold - built from Silver sources)
+  # ============================================================
+
+  installations_meteo:
+    description: "Installations de production d'énergie renouvelable avec station météo la plus proche. Le lien 
+    géographique est assuré par la maille IRIS."
+    source:
+      depends_on:
+        - odre_installations
+        - ign_contours_iris
+        - meteo_france_stations
+
+
   # exemple d'un fichier pour télécharger les données climatologiques sans passer par API
   # https://object.files.data.gouv.fr/meteofrance/data/synchro_ftp/BASE/HOR/H_01_latest-2025-2026.csv.gz
 

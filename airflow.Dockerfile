@@ -40,6 +40,9 @@ RUN uv pip list --outdated --format=json | \
 RUN uv pip list
 RUN uv pip list --outdated
 
+# Install DuckDB extensions once
+RUN python -c "import duckdb; conn = duckdb.connect(); conn.execute('INSTALL spatial; INSTALL parquet;')"
+
 
 # ------------------------------
 # ---- UV WORKFLOW: 5.88 GB ----

@@ -208,7 +208,7 @@ class PathResolver:
         return self._silver_dir / "backup.parquet"
 
     # =========================================================================
-    # Gold Layer (Analytical datasets from joined sources)
+    # Gold Layer (Current + Backup)
     # =========================================================================
 
     @property
@@ -255,14 +255,15 @@ if __name__ == "__main__":
         logger.exception(str(e), extra=e.validation_errors)
         sys.exit(-1)
 
-    for _name, _dataset in _catalog.datasets.items():
+    # Only display remote datasets (derived datasets don't have ingestion config)
+    for _dataset in _catalog.get_remote_datasets():
         # Generate run_version from IngestionFrequency
         _run_version = _dataset.ingestion.frequency.format_datetime_as_version(datetime.now())
 
         _resolver = PathResolver(dataset_name=_dataset.name)
 
         logger.info(
-            f"dataset → {_name}",
+            f"dataset → {_dataset.name}",
             extra={
                 "dataset": _dataset.model_dump(),
                 "run_version": _run_version,

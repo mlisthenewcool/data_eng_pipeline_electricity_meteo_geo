@@ -5,7 +5,6 @@ from pathlib import Path
 import polars as pl
 
 from de_projet_perso.core.logger import logger
-from de_projet_perso.pipeline.transformations import register_bronze, register_silver
 from de_projet_perso.pipeline.validators import validate_odre_installations
 
 # Renewable energy filieres
@@ -26,8 +25,7 @@ TYPE_ENERGIE_MAPPING = {
 }
 
 
-@register_bronze("odre_installations")
-def transform_bronze_odre(landing_path: Path) -> pl.DataFrame:
+def transform_bronze(landing_path: Path) -> pl.DataFrame:
     """Bronze transformation for ODRE installations.
 
     Simply reads parquet from landing.
@@ -42,8 +40,7 @@ def transform_bronze_odre(landing_path: Path) -> pl.DataFrame:
     return pl.read_parquet(landing_path)
 
 
-@register_silver("odre_installations")
-def transform_silver_odre(latest_bronze_path: Path) -> pl.DataFrame:
+def transform_silver(latest_bronze_path: Path) -> pl.DataFrame:
     """Silver transformation for ODRE installations.
 
     Normalizes column names to snake_case, selects relevant columns,
@@ -51,7 +48,7 @@ def transform_silver_odre(latest_bronze_path: Path) -> pl.DataFrame:
 
     Transformations applied:
     - Rename columns to snake_case
-    - Select relevant columns (52 → ~22)
+    - Select relevant columns (52 -> ~22)
     - Add est_renouvelable flag
     - Add type_energie simplified classification
     - Add est_actif flag (not disconnected)

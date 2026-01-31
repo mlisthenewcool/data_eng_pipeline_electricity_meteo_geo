@@ -86,7 +86,7 @@ class TqdmExtractCallback(ExtractCallback):
 
 
 @dataclass(frozen=True)
-class ExtractionInfo:
+class ExtractedFileInfo:
     """Information about a file extracted from an archive.
 
     This is a low-level utility data structure containing only
@@ -143,7 +143,7 @@ def extract_7z(
     target_filename: str,
     dest_dir: Path,
     validate_sqlite: bool = True,
-) -> ExtractionInfo:
+) -> ExtractedFileInfo:
     """Extract a specific file from a 7z archive.
 
     This is a low-level utility function that handles pure extraction logic.
@@ -161,7 +161,7 @@ def extract_7z(
         validate_sqlite: If True, validate SQLite header after extraction.
 
     Returns:
-        ExtractionInfo with path, size, and SHA256 of extracted file only.
+        ExtractedFileInfo with path, size, and SHA256 of extracted file only.
 
     Raises:
         ArchiveNotFoundError: If archive_path doesn't exist.
@@ -248,7 +248,7 @@ def extract_7z(
                 },
             )
 
-            return ExtractionInfo(
+            return ExtractedFileInfo(
                 path=dest_path,
                 size_mib=size_mib,
                 sha256=extracted_file_hash,

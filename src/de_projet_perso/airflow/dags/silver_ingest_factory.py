@@ -1,27 +1,27 @@
 """TODO docstring."""
 
 from datetime import datetime, timedelta
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from airflow.sdk import DAG, Asset, Metadata, XComArg, dag, task
 from pydantic import TypeAdapter
 
-from de_projet_perso.airflow.assets import get_silver_asset
+from de_projet_perso.airflow.assets import ASSETS_SILVER
 from de_projet_perso.airflow.dags.error_dag import create_error_dag
 from de_projet_perso.core.data_catalog import DataCatalog
 from de_projet_perso.core.exception_handler import log_exception_with_extra
 from de_projet_perso.core.exceptions import InvalidCatalogError
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.settings import settings
-from de_projet_perso.pipeline.constants import PipelineAction
-from de_projet_perso.pipeline.manager import PipelineManager
+from de_projet_perso.pipeline.manager import RemoteDatasetPipeline
 from de_projet_perso.pipeline.results import (
-    BronzeResult,
-    CheckMetadataResult,
-    ExtractResult,
-    IngestResult,
+    BronzeStageResult,
+    DownloadStageResult,
+    ExtractionStageResult,
 )
-from de_projet_perso.pipeline.state import PipelineStateManager
+
+if TYPE_CHECKING:
+    from airflow.sdk.execution_time.context import InletEventsAccessors
 
 # =============================================================================
 # Production defaults - TODO, move to settings
@@ -58,7 +58,7 @@ TASK_POSTGRES_TIMEOUT = timedelta(minutes=10)
 # if needed ?
 
 
-def _create_dag(manager: PipelineManager, asset: Asset) -> DAG:
+def _create_dag(manager: RemoteDatasetPipeline, asset: Asset) -> DAG:
     """Create a production-ready DAG for a dataset.
 
     Args:
@@ -82,48 +82,68 @@ def _create_dag(manager: PipelineManager, asset: Asset) -> DAG:
     )
     def _dag() -> None:
         # ============================================================
-        # 1. CHECK REMOTE (HTTP HEAD) - short-circuit if unchanged.
+        # 2. INGEST WITH SHORT-CIRCUITS IF CONTENT IN UNCHANGED
+        #   HTTP HEAD - short-circuit with ETag / Last-modified
+        #   DOWNLOAD
+        #   COMPARE HASH (SHA256)
         # ============================================================
-        @task.short_circuit(task_id=TASK_CHECK)
-        def check_remote_task() -> XComArg | bool:
-            """Check if remote data changed (HTTP HEAD) - short-circuit if unchanged."""
-            metadata_res = manager.has_dataset_metadata_changed()
-            return (
-                metadata_res.model_dump(mode="json")
-                if metadata_res.action != PipelineAction.SKIP
-                else False
+        @task.short_circuit(
+            task_id=TASK_INGEST, execution_timeout=TASK_INGEST_TIMEOUT, inlets=[asset]
+        )
+        def ingest_task(
+            version: str, inlet_events: "InletEventsAccessors | None" = None
+        ) -> XComArg | bool:
+            """IngestionPolicy strategy with various checks to short-circuit if data is unchanged.
+
+            1. Retrieve metadata from remote
+            2. Do we have metadata from previous runs ?
+                Yes: Compare it to metadata from 1. - short-circuit if unchanged.
+                No: continue to 3.
+            3. Download content to landing layer
+            4. Are hash (sha256) for both files identical ?
+                Yes: Delete content from landing layer AND short-circuit the DAG
+                No: continue to next task
+            """
+            previous_metadata = (
+                inlet_events[asset][-1].extra
+                if inlet_events and asset in inlet_events and len(inlet_events[asset]) > 0
+                else None
             )
 
-        # ============================================================
-        # 2. DOWNLOAD + SHA256 CHECK - short-circuit if identical.
-        # ============================================================
-        @task.short_circuit(task_id=TASK_INGEST, execution_timeout=TASK_INGEST_TIMEOUT)
-        def ingest_task(ctx: XComArg, version: str) -> XComArg | bool:
-            """Download and check if SHA256 changed - short-circuit if unchanged."""
-            check_metadata_ctx = CheckMetadataResult.model_validate(ctx)
+            logger.debug("TEST POUR AFFICHAGE")
 
-            ingest_res = manager.ingest(
-                version=version, remote_metadata=check_metadata_ctx.remote_metadata
-            )
+            ingestion_result = manager.ingest(version=version, previous_metadata=previous_metadata)
 
-            if not manager.has_hash_changed(ingest_res):
+            if isinstance(ingestion_result, bool):
                 return False
 
-            return ingest_res.model_dump(mode="json")
+            return ingestion_result.model_dump(mode="json")
 
         # ============================================================
         # 3. (Optional) EXTRACTION - only if remote data requires it
         # ============================================================
-        @task.short_circuit(task_id=TASK_EXTRACT, execution_timeout=TASK_EXTRACT_TIMEOUT)
-        def extract_task(ctx: XComArg) -> XComArg | bool:
+        @task.short_circuit(
+            task_id=TASK_EXTRACT, execution_timeout=TASK_EXTRACT_TIMEOUT, inlets=[asset]
+        )
+        def extract_task(
+            ctx: XComArg, inlet_events: "InletEventsAccessors | None" = None
+        ) -> XComArg | bool:
             """Extract archive and check if SHA256 changed - short-circuit if unchanged."""
-            ingest_ctx = IngestResult.model_validate(ctx)
-            extract_res = manager.extract_archive(ingest_ctx)
+            previous_metadata = (
+                inlet_events[asset][-1].extra
+                if inlet_events and asset in inlet_events and len(inlet_events[asset]) > 0
+                else None
+            )
 
-            if not manager.has_hash_changed(extract_res):
+            extract_result = manager.extract_archive(DownloadStageResult.model_validate(ctx))
+
+            # --- IF HASH IS IDENTICAL (extracted file), REMOVE LANDING FILES AND SKIP ---
+            if manager.should_skip_extraction(
+                extract_result=extract_result, previous_metadata=previous_metadata
+            ):
                 return False
 
-            return extract_res.model_dump(mode="json")
+            return extract_result.model_dump(mode="json")
 
         # ============================================================
         # 4. CONVERT TO BRONZE - parquet + column names normalisation
@@ -131,12 +151,8 @@ def _create_dag(manager: PipelineManager, asset: Asset) -> DAG:
         @task(task_id=TASK_BRONZE, execution_timeout=TASK_BRONZE_TIMEOUT)
         def bronze_task(ctx: XComArg) -> XComArg:
             """Convert landing file to Parquet with normalized column names."""
-            # todo
-            bronze_adapter = TypeAdapter(Union[IngestResult, ExtractResult])
-            ingest_or_extract_ctx = bronze_adapter.validate_python(ctx)
-
-            bronze_res = manager.to_bronze(ingest_or_extract_ctx)
-            return bronze_res.model_dump(mode="json")
+            type_adapter = TypeAdapter(Union[DownloadStageResult, ExtractionStageResult])
+            return manager.to_bronze(type_adapter.validate_python(ctx)).model_dump(mode="json")
 
         # ============================================================
         # 5. TRANSFORM TO SILVER - Business Rules + Metadata
@@ -153,105 +169,37 @@ def _create_dag(manager: PipelineManager, asset: Asset) -> DAG:
             Yields:
                 Metadata for the silver Asset with enriched information
             """
-            # todo: we don't really need that, atm bronze_dict has more keys than just BronzeResult
-            #  and we only need those extra keys here for metadata
-            bronze_ctx = BronzeResult.model_validate(ctx)
-
-            # Transform to silver
-            silver_res = manager.to_silver(bronze_ctx)
-
-            # TODO: replace by parquet_file_size_mib
-
-            # TODO: move that to manager ?
-            PipelineStateManager.update_success(dataset_name=manager.dataset.name, data=silver_res)
+            silver_result = manager.to_silver(BronzeStageResult.model_validate(ctx))
 
             # Emit enriched metadata for Airflow UI
             # These metadata fields will be visible in the Assets tab
+            # and will be used to short-circuit refresh on ingest_task
+
             yield Metadata(
                 asset=asset,
-                extra={
-                    **silver_res.model_dump(
-                        mode="json", exclude_none=True, exclude={"path", "extracted_file_path"}
-                    )
-                    | {
-                        "state_file": PipelineStateManager.get_state_path(manager.dataset.name),
-                    },
-                },
+                # exclude={"path", "extracted_file_path"}
+                extra=manager.create_metadata_emission(silver_result).model_dump(exclude_none=True),
             )
 
         # ============================================================
-        # 6. LOAD SILVER TO POSTGRES (if SQL exists for this dataset)
+        # DAG's WORKFLOW : ingest > (extract) > bronze > silver
         # ============================================================
-        @task(task_id=TASK_POSTGRES, execution_timeout=TASK_POSTGRES_TIMEOUT)
-        def load_to_postgres_task(dataset_name: str) -> dict[str, Any]:
-            """Load Silver data to PostgreSQL if SQL file exists.
-
-            This task is convention-based: if sql/upsert/silver/{dataset_name}.sql
-            exists, the data is loaded to PostgreSQL. Otherwise, it skips silently.
-
-            Args:
-                dataset_name: Dataset identifier
-
-            Returns:
-                Dict with 'skipped' flag and 'rows' count
-            """
-            # Deferred imports for Airflow task isolation (parse-time vs runtime)
-            from de_projet_perso.core.path_resolver import PathResolver  # noqa: PLC0415
-            from de_projet_perso.database.loader import PostgresLoader  # noqa: PLC0415
-
-            loader = PostgresLoader()
-
-            if not loader.has_silver_sql(dataset_name):
-                logger.info(
-                    "No PostgreSQL loader configured, skipping",
-                    extra={"dataset": dataset_name},
-                )
-                return {"skipped": True, "rows": 0}
-
-            # Initialize schema/tables if needed (idempotent)
-            loader.initialize_schema()
-            loader.initialize_silver_tables()
-
-            # Load data
-            resolver = PathResolver(dataset_name)
-            rows = loader.load_silver(dataset_name, resolver.silver_current_path)
-
-            logger.info(
-                "Loaded Silver to PostgreSQL",
-                extra={"dataset": dataset_name, "rows": rows},
-            )
-
-            return {"skipped": False, "rows": rows}
-
-        # ============================================================
-        # DAG's WORKFLOW - check > ingest > (extract) > bronze > silver > postgres
-        # ============================================================
-        # 1. CHECK
-        remote_metadata = check_remote_task()
 
         # generate version inside Airflow decorated function so template will be replaced
         run_version = manager.dataset.ingestion.frequency.get_airflow_version_template()
 
-        # 2. INGEST
-        landing_data = ingest_task(remote_metadata, run_version)
+        # 1. INGEST
+        landing_ctx = ingest_task(run_version)
 
-        # 3. (optional) EXTRACT
+        # 2. (optional) EXTRACT
         if manager.dataset.source.format.is_archive:
-            ready_to_convert = extract_task(landing_data)
-        else:
-            ready_to_convert = landing_data
+            landing_ctx = extract_task(landing_ctx)
 
-        # 4. CONVERT TO BRONZE
-        bronze_data = bronze_task(ready_to_convert)
+        # 3. CONVERT TO BRONZE
+        bronze_ctx = bronze_task(landing_ctx)
 
-        # 5. TRANSFORM TO SILVER
-        silver_result = silver_task(bronze_data)
-
-        # 6. LOAD SILVER TO POSTGRES
-        postgres_result = load_to_postgres_task(manager.dataset.name)
-
-        # Explicit dependency: postgres runs after silver
-        silver_result >> postgres_result
+        # 4. TRANSFORM TO SILVER
+        _ = silver_task(bronze_ctx)
 
     return _dag()
 
@@ -275,23 +223,24 @@ def _generate_all_dags() -> dict[str, DAG]:
 
     pipelines: dict[str, DAG] = {}
 
-    for name, dataset in catalog.datasets.items():
+    # Only process remote datasets (derived datasets have their own Gold DAGs)
+    for dataset in catalog.get_remote_datasets():
         try:
-            asset = get_silver_asset(dataset_name=dataset.name)
-            manager = PipelineManager(dataset=dataset)
+            asset = ASSETS_SILVER[dataset.name]
+            manager = RemoteDatasetPipeline(dataset=dataset)
 
-            dag_id = f"dag_{name}"
+            dag_id = f"dag_{dataset.name}"
             dag_obj = _create_dag(manager, asset)
 
-            pipelines[name] = dag_obj
+            pipelines[dataset.name] = dag_obj
             logger.info(f"Created dataset DAG: {dag_id}")
 
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
-            logger.exception(f"Failed to create DAG for {name}", extra={"error": error_msg})
+            logger.exception(f"Failed to create DAG for {dataset.name}", extra={"error": error_msg})
             # Create individual error DAG with unique ID
-            pipelines[f"{name}_error"] = create_error_dag(
-                dag_id=f"ERROR_LOADING_DAG_{name}", error_message=error_msg
+            pipelines[f"{dataset.name}_error"] = create_error_dag(
+                dag_id=f"ERROR_LOADING_DAG_{dataset.name}", error_message=error_msg
             )
 
     return pipelines
