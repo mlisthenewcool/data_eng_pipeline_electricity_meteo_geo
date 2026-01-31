@@ -19,10 +19,10 @@ from de_projet_perso.core.path_resolver import PathResolver
 MAX_DISTANCE_KM = 20.0
 
 
-def transform_gold_installations_meteo(
-    odre_silver_path: Path | None = None,
-    ign_silver_path: Path | None = None,
-    meteo_silver_path: Path | None = None,
+def transform_gold(
+    odre_installations_silver_path: Path | None = None,
+    ign_contours_iris_silver_path: Path | None = None,
+    meteo_france_stations_silver_path: Path | None = None,
 ) -> pl.DataFrame:
     """Create analytical dataset linking installations to weather stations.
 
@@ -35,39 +35,41 @@ def transform_gold_installations_meteo(
     4. Filters to stations within MAX_DISTANCE_KM
 
     Args:
-        odre_silver_path: Path to ODRE installations Silver parquet
+        odre_installations_silver_path: Path to ODRE installations Silver parquet
             (defaults to silver/odre_installations/current.parquet)
-        ign_silver_path: Path to IGN contours IRIS Silver parquet
+        ign_contours_iris_silver_path: Path to IGN contours IRIS Silver parquet
             (defaults to silver/ign_contours_iris/current.parquet)
-        meteo_silver_path: Path to Météo France stations Silver parquet
+        meteo_france_stations_silver_path: Path to Meteo France stations Silver parquet
             (defaults to silver/meteo_france_stations/current.parquet)
 
     Returns:
         DataFrame with installations enriched with nearest weather station info
     """
     # Use default paths if not provided
-    if odre_silver_path is None:
-        odre_silver_path = PathResolver("odre_installations").silver_current_path
-    if ign_silver_path is None:
-        ign_silver_path = PathResolver("ign_contours_iris").silver_current_path
-    if meteo_silver_path is None:
-        meteo_silver_path = PathResolver("meteo_france_stations").silver_current_path
+    if odre_installations_silver_path is None:
+        odre_installations_silver_path = PathResolver("odre_installations").silver_current_path
+    if ign_contours_iris_silver_path is None:
+        ign_contours_iris_silver_path = PathResolver("ign_contours_iris").silver_current_path
+    if meteo_france_stations_silver_path is None:
+        meteo_france_stations_silver_path = PathResolver(
+            "meteo_france_stations"
+        ).silver_current_path
 
     logger.info(
         "Starting Gold transformation: installations_meteo",
         extra={
-            "odre_path": str(odre_silver_path),
-            "ign_path": str(ign_silver_path),
-            "meteo_path": str(meteo_silver_path),
+            "odre_path": str(odre_installations_silver_path),
+            "ign_path": str(ign_contours_iris_silver_path),
+            "meteo_path": str(meteo_france_stations_silver_path),
             "max_distance_km": MAX_DISTANCE_KM,
         },
     )
 
     # Load Silver datasets
     logger.debug("Loading Silver datasets")
-    df_odre = pl.read_parquet(odre_silver_path)
-    df_ign = pl.read_parquet(ign_silver_path)
-    df_meteo = pl.read_parquet(meteo_silver_path)
+    df_odre = pl.read_parquet(odre_installations_silver_path)
+    df_ign = pl.read_parquet(ign_contours_iris_silver_path)
+    df_meteo = pl.read_parquet(meteo_france_stations_silver_path)
 
     logger.debug(
         "Silver datasets loaded",

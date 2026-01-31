@@ -6,11 +6,9 @@ import duckdb
 import polars as pl
 
 from de_projet_perso.core.logger import logger
-from de_projet_perso.pipeline.transformations import register_bronze, register_silver
 from de_projet_perso.pipeline.validators import validate_ign_contours_iris
 
 
-@register_bronze("ign_contours_iris")
 def transform_bronze(landing_path: Path) -> pl.DataFrame:
     """Bronze transformation for IGN Contours IRIS.
 
@@ -51,7 +49,6 @@ FROM ST_read(?, layer = 'contours_iris')
     return df
 
 
-@register_silver("ign_contours_iris")
 def transform_silver(latest_bronze_path: Path) -> pl.DataFrame:
     """Silver transformation for IGN Contours IRIS.
 

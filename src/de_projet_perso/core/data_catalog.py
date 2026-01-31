@@ -14,7 +14,7 @@ Architecture:
             ├── name: str (auto-injected from YAML key)
             ├── description: str
             ├── source: Source (provider, URL, format, inner_file)
-            └── ingestion: Ingestion (frequency, mode)
+            └── ingestion: IngestionPolicy (frequency, mode)
 
 Example:
     Load catalog and retrieve dataset configuration:
@@ -262,10 +262,10 @@ class IngestionFrequency(StrEnum):
         """
         if settings.is_running_on_airflow:
             raise AirflowContextError(
-                operation="format_datetime_as_version()",
+                operation="`format_datetime_as_version`",
                 expected_context="not airflow",
                 actual_context="airflow",
-                suggestion="use get_airflow_version_template() instead",
+                suggestion="use `get_airflow_version_template` instead",
             )
 
         if self == IngestionFrequency.HOURLY:
@@ -275,11 +275,11 @@ class IngestionFrequency(StrEnum):
         return dt.strftime("%Y%m%d" if no_dash else "%Y-%m-%d")
 
 
-class Source(StrictModel):
-    """Data source configuration defining where and how to fetch raw data.
+class RemoteSourceConfig(StrictModel):
+    """Configuration for external data sources downloaded from remote servers.
 
-    This model specifies the origin of the data, including the provider,
-    download URL, file format, and optional inner file for archives.
+    Used for datasets fetched via HTTP from external providers (IGN, ODRE, etc.).
+    This is the traditional pipeline: download → extract → bronze → silver.
 
     Attributes:
         provider: Data provider name (e.g., "IGN", "ODRE", "INSEE")
@@ -302,7 +302,7 @@ class Source(StrictModel):
         ...     "format": SourceFormat.SEVEN_Z,
         ...     "inner_file": "iris.gpkg"
         ... }
-        ... source = Source.model_validate(data)
+        ... source = RemoteSourceConfig.model_validate(data)
 
         Direct file source (no extraction):
 
@@ -312,7 +312,7 @@ class Source(StrictModel):
         ...     "format": SourceFormat.PARQUET,
         ...     "inner_file": None
         ... }
-        >>> source = Source.model_validate(data)
+        >>> source = RemoteSourceConfig.model_validate(data)
 
     """
 
@@ -361,6 +361,40 @@ class Source(StrictModel):
         return str(self.url)
 
 
+class DerivedSourceConfig(StrictModel):
+    """Configuration for derived datasets built from Silver sources.
+
+    Used for Gold layer datasets that join/aggregate multiple Silver datasets.
+    Dependencies must be existing datasets in the same catalog.
+
+    Attributes:
+        depends_on: List of Silver dataset names required for transformation.
+                    All dependencies must exist and have Silver data available.
+
+    Example:
+        >>> data = {
+        ...     "depends_on": ["odre_installations", "ign_contours_iris", "meteo_france_stations"]
+        ... }
+        >>> source = DerivedSourceConfig.model_validate(data)
+    """
+
+    depends_on: list[str]
+
+    @model_validator(mode="after")
+    def validate_depends_on_not_empty(self) -> Self:
+        """Ensure at least one dependency is specified.
+
+        Returns:
+            Self instance if validation passes.
+
+        Raises:
+            ValueError: If depends_on is empty.
+        """
+        if not self.depends_on:
+            raise ValueError("depends_on must contain at least one dataset name")
+        return self
+
+
 class IngestionMode(StrEnum):
     """Data ingestion mode defining how updates are processed.
 
@@ -377,7 +411,7 @@ class IngestionMode(StrEnum):
     INCREMENTAL = "incremental"
 
 
-class Ingestion(StrictModel):
+class IngestionPolicy(StrictModel):
     """Data ingestion configuration defining frequency and mode.
 
     This model controls when and how data should be fetched from the source.
@@ -387,10 +421,10 @@ class Ingestion(StrictModel):
     Attributes:
         frequency: Expected update frequency from the source (e.g., daily, hourly).
                    Determines version format: daily → "YYYYMMDD", hourly → "YYYYMMDDTHHMMSS"
-        mode: Ingestion mode (snapshot or incremental)
+        mode: IngestionPolicy mode (snapshot or incremental)
 
     Example:
-        >>> ingestion = Ingestion(
+        >>> ingestion = IngestionPolicy(
         ...     frequency=IngestionFrequency.MONTHLY,
         ...     mode=IngestionMode.SNAPSHOT
         ... )
@@ -412,32 +446,68 @@ class Ingestion(StrictModel):
     # incremental_key: str  # TODO: Add validation -> required if mode=INCREMENTAL
 
 
-class Dataset(StrictModel):
-    """Complete dataset configuration combining source and ingestion policies.
+class DatasetRemoteConfig(StrictModel):
+    """Configuration for a dataset downloaded from a remote source.
 
-    This model represents a full dataset definition from the catalog,
-    including where to get the data and how often to fetch it.
-    Path resolution is delegated to PathResolver for better separation of concerns.
+    Remote datasets are fetched via HTTP from external providers (IGN, ODRE, etc.)
+    and processed through the medallion architecture: download → bronze → silver.
 
     Attributes:
-        name: Dataset identifier (e.g., "ign_contours_iris")
+        name: Dataset identifier (e.g., "ign_contours_iris", "odre_installations")
         description: Human-readable dataset description
-        source: Source configuration (provider, URL, format)
-        ingestion: Ingestion configuration (frequency, mode)
+        source: Remote source configuration (provider, URL, format)
+        ingestion: Ingestion policy (frequency, mode)
 
     Example:
-        >>> dataset = Dataset(
+        >>> dataset = DatasetRemoteConfig(
         ...     name="ign_contours_iris",
         ...     description="IGN administrative boundaries",
-        ...     source=Source(...),
-        ...     ingestion=Ingestion(...),
+        ...     source=RemoteSourceConfig(
+        ...         provider="IGN",
+        ...         url="https://data.geopf.fr/...",
+        ...         format=SourceFormat.SEVEN_Z,
+        ...         inner_file="iris.gpkg"
+        ...     ),
+        ...     ingestion=IngestionPolicy(
+        ...         frequency=IngestionFrequency.DAILY,
+        ...         mode=IngestionMode.SNAPSHOT
+        ...     ),
         ... )
     """
 
     name: str
     description: str
-    source: Source
-    ingestion: Ingestion
+    source: RemoteSourceConfig
+    ingestion: IngestionPolicy
+
+
+class DatasetDerivedConfig(StrictModel):
+    """Configuration for a dataset derived from other datasets (Gold layer).
+
+    Derived datasets are built by joining/aggregating multiple Silver datasets.
+    They are triggered by Airflow Assets when their dependencies update.
+
+    Attributes:
+        name: Dataset identifier (e.g., "installations_meteo")
+        description: Human-readable dataset description
+        source: Derived source configuration (dependencies)
+
+    Example:
+        >>> dataset = DatasetDerivedConfig(
+        ...     name="installations_meteo",
+        ...     description="Installations with nearest weather station",
+        ...     source=DerivedSourceConfig(
+        ...         depends_on=["odre_installations", "ign_contours_iris", "meteo_france_stations"]
+        ...     ),
+        ... )
+    """
+
+    name: str
+    description: str
+    source: DerivedSourceConfig
+
+
+DatasetConfig = DatasetRemoteConfig | DatasetDerivedConfig
 
 
 class DataCatalog(StrictModel):
@@ -458,7 +528,7 @@ class DataCatalog(StrictModel):
         >>> dataset = catalog.get_dataset("ign_contours_iris")
     """
 
-    datasets: dict[str, Dataset]
+    datasets: dict[str, DatasetConfig]
 
     @model_validator(mode="before")
     @classmethod
@@ -486,11 +556,6 @@ class DataCatalog(StrictModel):
         Raises:
             InvalidCatalogError: If the catalog file doesn't exist, contains
                                  invalid YAML, or fails Pydantic validation.
-
-        Example:
-            >>> catalog = DataCatalog.load(Path("data/catalog.yaml"))
-            >>> len(catalog.datasets)
-            5
         """
         if not path.exists():
             raise InvalidCatalogError(path=path, reason="file doesn't exist")
@@ -505,6 +570,7 @@ class DataCatalog(StrictModel):
                 )
 
             return cls.model_validate(data)
+
         except yaml.YAMLError as yaml_error:
             raise InvalidCatalogError(
                 path=path, reason=f"error parsing YAML: {yaml_error}"
@@ -514,16 +580,16 @@ class DataCatalog(StrictModel):
                 path=path,
                 reason="Pydantic validation errors",
                 validation_errors=format_pydantic_errors(pydantic_errors),
-            ) from pydantic_errors
+            ) from None
 
-    def get_dataset(self, name: str) -> Dataset:
+    def get_dataset(self, name: str) -> DatasetConfig:
         """Retrieve a dataset configuration by name.
 
         Args:
             name: Dataset identifier (e.g., "ign_contours_iris").
 
         Returns:
-            Dataset configuration for the requested dataset.
+            DatasetConfig (either DatasetRemote or DatasetDerived) for the requested dataset.
 
         Raises:
             DatasetNotFoundError: If the dataset doesn't exist in the catalog.
@@ -545,6 +611,57 @@ class DataCatalog(StrictModel):
 
         return dataset
 
+    def get_remote_datasets(self) -> list[DatasetRemoteConfig]:
+        """Return all datasets fetched from remote sources.
+
+        Returns:
+            List of datasets with RemoteSourceConfig configuration.
+        """
+        return [d for d in self.datasets.values() if isinstance(d, DatasetRemoteConfig)]
+
+    def get_derived_datasets(self) -> list[DatasetDerivedConfig]:
+        """Return all datasets derived from Silver sources.
+
+        Returns:
+            List of datasets with DerivedSourceConfig configuration (Gold layer).
+        """
+        return [d for d in self.datasets.values() if isinstance(d, DatasetDerivedConfig)]
+
+    @model_validator(mode="after")
+    def validate_derived_dependencies_exist(self) -> Self:
+        """Ensure all derived dataset dependencies reference existing datasets.
+
+        Validates that:
+        1. All dependencies exist in the catalog
+        2. All dependencies are remote datasets (have Silver output)
+        3. No circular dependencies (Gold cannot depend on Gold)
+
+        Returns:
+            Self instance if validation passes.
+
+        Raises:
+            ValueError: If dependency validation fails.
+        """
+        for dataset in self.get_derived_datasets():
+            source = dataset.source
+            for dep_name in source.depends_on:
+                # Check dependency exists
+                if dep_name not in self.datasets:
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' depends on '{dep_name}' "
+                        f"which is not defined in the catalog"
+                    )
+
+                # Check dependency is remote (has Silver output)
+                dep = self.datasets[dep_name]
+                if not isinstance(dep, DatasetRemoteConfig):
+                    raise ValueError(
+                        f"Dataset '{dataset.name}' depends on '{dep_name}' "
+                        f"which is itself derived. Gold datasets can only depend on "
+                        f"Silver datasets (from remote sources)."
+                    )
+        return self
+
 
 if __name__ == "__main__":
     import sys
@@ -554,7 +671,7 @@ if __name__ == "__main__":
     try:
         _catalog = DataCatalog.load(settings.data_catalog_file_path)
     except InvalidCatalogError as e:
-        logger.exception(str(e), extra=e.validation_errors)
+        logger.error(str(e), extra=e.validation_errors)
         sys.exit(1)
 
     logger.info(f"Catalog loaded: found {len(_catalog.datasets)} dataset(s)")

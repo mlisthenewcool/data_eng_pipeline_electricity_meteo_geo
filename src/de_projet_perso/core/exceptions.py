@@ -269,3 +269,37 @@ class AirflowContextError(PlatformError):
         self.actual_context = actual_context
         self.suggestion = suggestion
         super().__init__("Code is executed on the wrong context")
+
+
+class PipelineError(BaseProjectException):
+    """Base exception for pipeline-related failures."""
+
+
+class SilverDependencyNotFoundError(PipelineError):
+    """Raised when a Gold transformation's Silver dependencies are missing.
+
+    This error indicates that one or more Silver datasets required for a
+    Gold transformation have not been produced yet.
+
+    Attributes:
+        gold_dataset: Name of the Gold dataset being processed
+        missing_dependencies: List of (dataset_name, expected_path) tuples
+    """
+
+    def __init__(self, gold_dataset: str, missing_dependencies: list[tuple[str, Path]]) -> None:
+        """Initialize with Gold dataset and missing dependency info.
+
+        Args:
+            gold_dataset: Name of the Gold dataset
+            missing_dependencies: List of (name, path) for missing Silver files
+        """
+        self.gold_dataset = gold_dataset
+        self.missing_dependencies = missing_dependencies
+
+        missing_names = [name for name, _ in missing_dependencies]
+        missing_details = "\n".join(f"  - {name}: {path}" for name, path in missing_dependencies)
+
+        super().__init__(
+            f"Gold dataset '{gold_dataset}' cannot be built: "
+            f"missing Silver dependencies: {missing_names}\n{missing_details}"
+        )

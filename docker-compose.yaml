@@ -64,6 +64,7 @@ services:
       - ./src/de_projet_perso/airflow/dags:/opt/airflow/dags # TODO: retirer en prod, remplacer par la variable AIRFLOW__CORE__DAGS_FOLDER
       - ./src:/opt/airflow/src
       - ./data:/opt/airflow/data # TODO: retirer en prod
+      - ./postgres:/opt/airflow/postgres # TODO: bonne stratégie en prod ?
       # - airflow_data:/opt/airflow/data # TODO: ajouter en prod
     healthcheck:
       # https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html

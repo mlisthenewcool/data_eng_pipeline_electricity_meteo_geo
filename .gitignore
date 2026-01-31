@@ -18,6 +18,8 @@ data/**/*
 AGENTS.md
 CLAUDE.md
 opencode.jsonc
+.agents/
+.opencode/
 
 # --------------------------------------------------------------
 # https://github.com/github/gitignore/blob/main/Python.gitignore

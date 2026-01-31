@@ -15,7 +15,7 @@ from de_projet_perso.core.logger import logger
 
 
 @dataclass(frozen=True)
-class ChangeResult:
+class ChangeDetectionResult:
     """Verdict of the change detection engine.
 
     Attributes:
@@ -31,8 +31,8 @@ class ChangeResult:
         return self.has_changed
 
 
-@dataclass
-class RemoteFileInfo:
+@dataclass(frozen=True)
+class RemoteFileMetadata:
     """Metadata information about a remote file.
 
     Attributes:
@@ -49,50 +49,50 @@ class RemoteFileInfo:
         """Check if at least one metadata field is populated."""
         return any(v is not None for v in [self.etag, self.last_modified, self.content_length])
 
-    def compare_with(self, other: Self) -> ChangeResult:  # noqa: PLR0911
+    def compare_with(self, other: Self) -> ChangeDetectionResult:  # noqa: PLR0911
         """Compare current metadata with a previous state to detect changes.
 
         Follows a strict priority order: ETag > Last-Modified > Content-Length.
         If no metadata is available for comparison, it fails safe by reporting a change.
 
         Args:
-            other: The previous RemoteFileInfo to compare against.
+            other: The previous RemoteFileMetadata to compare against.
 
         Returns:
-            A ChangeResult containing the boolean verdict and the rationale.
+            A ChangeDetectionResult containing the boolean verdict and the rationale.
         """
         # 1. Uncertainty Case (Fail-safe)
         if not self._has_any_field() or not other._has_any_field():
-            return ChangeResult(True, "Missing metadata on current or previous state")
+            return ChangeDetectionResult(True, "Missing metadata on current or previous state")
 
         # 2. ETag Check (Highest priority)
         if self.etag and other.etag:
             if self.etag != other.etag:
-                return ChangeResult(True, f"ETag changed: {other.etag} -> {self.etag}")
-            return ChangeResult(False, "ETag identical")
+                return ChangeDetectionResult(True, f"ETag changed: {other.etag} -> {self.etag}")
+            return ChangeDetectionResult(False, "ETag identical")
 
         # 3. Date Check
         if self.last_modified and other.last_modified:
             if self.last_modified > other.last_modified:
-                return ChangeResult(True, f"File is newer: {self.last_modified}")
-            return ChangeResult(False, "File date is identical or older")
+                return ChangeDetectionResult(True, f"File is newer: {self.last_modified}")
+            return ChangeDetectionResult(False, "File date is identical or older")
 
         # 4. Size Check
         if self.content_length is not None and other.content_length is not None:
             if self.content_length != other.content_length:
-                return ChangeResult(
+                return ChangeDetectionResult(
                     True, f"Size changed: {other.content_length} -> {self.content_length}"
                 )
-            return ChangeResult(False, "Size identical")
+            return ChangeDetectionResult(False, "Size identical")
 
-        return ChangeResult(True, "No matching metadata found to confirm identity")
+        return ChangeDetectionResult(True, "No matching metadata found to confirm identity")
 
 
 def get_remote_file_info(
     url: str,
     timeout: int = 30,
     allow_redirects: bool = True,
-) -> RemoteFileInfo:
+) -> RemoteFileMetadata:
     """Fetch remote file metadata using HTTP HEAD request.
 
     Performs a lightweight request to retrieve headers without downloading
@@ -104,7 +104,7 @@ def get_remote_file_info(
         allow_redirects: Whether to follow HTTP redirects.
 
     Returns:
-        RemoteFileInfo with parsed metadata
+        RemoteFileMetadata with parsed metadata
 
     Raises:
         httpx.HTTPStatusError: If the server returns an error status (e.g., 404).
@@ -160,7 +160,7 @@ def get_remote_file_info(
                 extra={"header": headers["content-length"], "error": str(e)},
             )
 
-    info = RemoteFileInfo(etag=etag, last_modified=last_modified, content_length=content_length)
+    info = RemoteFileMetadata(etag=etag, last_modified=last_modified, content_length=content_length)
 
     logger.info(
         "Remote file metadata retrieved",
@@ -174,17 +174,19 @@ def get_remote_file_info(
     return info
 
 
-def has_remote_file_changed(current: RemoteFileInfo, previous: RemoteFileInfo) -> ChangeResult:
-    """Compare two sets of RemoteFileInfo to detect changes.
+def has_remote_file_changed(
+    current: RemoteFileMetadata, previous: RemoteFileMetadata
+) -> ChangeDetectionResult:
+    """Compare two sets of RemoteFileMetadata to detect changes.
 
-    Wraps the logic of RemoteFileInfo.compare_with for functional usage.
+    Wraps the logic of RemoteFileMetadata.compare_with for functional usage.
 
     Args:
         current: Newly fetched metadata.
         previous: Metadata stored from a previous execution.
 
     Returns:
-        A ChangeResult object indicating if an update is required.
+        A ChangeDetectionResult object indicating if an update is required.
     """
     # TODO: ajouter méthode If-None-Match
     # headers = {}
@@ -201,7 +203,7 @@ def has_remote_file_changed(current: RemoteFileInfo, previous: RemoteFileInfo) -
     #         # CAS 304 : Le serveur confirme que rien n'a changé
     #         if response.status_code == 304:
     #             logger.info("Server returned 304: File unchanged", extra={"url": url})
-    #             return RemoteFileInfo(url=url, etag=previous_etag, available=True), False
+    #             return RemoteFileMetadata(url=url, etag=previous_etag, available=True), False
     #
     #         response.raise_for_status()
     #

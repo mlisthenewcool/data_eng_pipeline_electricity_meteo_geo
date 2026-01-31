@@ -6,7 +6,7 @@ This module validates that pipeline state files are coherent with reality on dis
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from de_projet_perso.core.data_catalog import Dataset
+from de_projet_perso.core.data_catalog import DatasetConfig
 from de_projet_perso.core.logger import logger
 from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.pipeline.state import PipelineStateManager
@@ -39,7 +39,7 @@ class PipelineValidator:
     """Validation logic for pipeline state coherence."""
 
     @staticmethod
-    def validate_state_coherence(dataset: Dataset) -> ValidationResult:
+    def validate_state_coherence(dataset: DatasetConfig) -> ValidationResult:
         """Verify state file matches reality on disk.
 
         This validation ensures that the state recorded in JSON

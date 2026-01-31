@@ -14,7 +14,7 @@ from airflow.sdk import Asset
 from de_projet_perso.core.path_resolver import PathResolver
 
 
-def get_silver_asset(dataset_name: str) -> Asset:
+def _get_silver_asset(dataset_name: str) -> Asset:
     """Create a Silver layer Asset for a dataset.
 
     Args:
@@ -24,7 +24,7 @@ def get_silver_asset(dataset_name: str) -> Asset:
         Asset configured for the Silver layer output
 
     Example:
-        >>> asset = get_silver_asset("ign_contours_iris")
+        >>> asset = _get_silver_asset("ign_contours_iris")
         >>> asset.name
         'ign_contours_iris_silver'
     """
@@ -38,7 +38,7 @@ def get_silver_asset(dataset_name: str) -> Asset:
     )
 
 
-def get_gold_asset(dataset_name: str) -> Asset:
+def _get_gold_asset(dataset_name: str) -> Asset:
     """Create a Gold layer Asset for an analytical dataset.
 
     Args:
@@ -48,7 +48,7 @@ def get_gold_asset(dataset_name: str) -> Asset:
         Asset configured for the Gold layer output
 
     Example:
-        >>> asset = get_gold_asset("installations_meteo")
+        >>> asset = _get_gold_asset("installations_meteo")
         >>> asset.name
         'installations_meteo_gold'
     """
@@ -68,14 +68,16 @@ def get_gold_asset(dataset_name: str) -> Asset:
 # These are instantiated at module load time for convenience.
 # Use these when referencing Silver assets in Gold DAGs or cross-DAG dependencies.
 
-ASSET_SILVER_IGN_CONTOURS_IRIS = get_silver_asset("ign_contours_iris")
-ASSET_SILVER_METEO_FRANCE_STATIONS = get_silver_asset("meteo_france_stations")
-ASSET_SILVER_ODRE_INSTALLATIONS = get_silver_asset("odre_installations")
-ASSET_SILVER_ODRE_ECO2MIX_CONS_DEF = get_silver_asset("odre_eco2mix_cons_def")
-ASSET_SILVER_ODRE_ECO2MIX_TR = get_silver_asset("odre_eco2mix_tr")
+ASSETS_SILVER = {
+    "ign_contours_iris": _get_silver_asset("ign_contours_iris"),
+    "meteo_france_stations": _get_silver_asset("meteo_france_stations"),
+    "odre_installations": _get_silver_asset("odre_installations"),
+    "odre_eco2mix_cons_def": _get_silver_asset("odre_eco2mix_cons_def"),
+    "odre_eco2mix_tr": _get_silver_asset("odre_eco2mix_tr"),
+}
 
 # =============================================================================
 # Pre-defined Gold Assets
 # =============================================================================
 
-ASSET_GOLD_INSTALLATIONS_METEO = get_gold_asset("installations_meteo")
+ASSETS_GOLD = {"installations_meteo": _get_gold_asset("installations_meteo")}

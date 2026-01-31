@@ -26,13 +26,13 @@ CREATE TABLE IF NOT EXISTS ref.stations_meteo (
 );
 
 -- Index for geographic queries (simple lat/lon, PostGIS later if needed)
-CREATE INDEX IF NOT EXISTS idx_stations_meteo_coords 
+CREATE INDEX IF NOT EXISTS idx_stations_meteo_coords
     ON ref.stations_meteo(latitude, longitude);
 
 -- Index for filtering by measurement type
-CREATE INDEX IF NOT EXISTS idx_stations_meteo_solaire 
+CREATE INDEX IF NOT EXISTS idx_stations_meteo_solaire
     ON ref.stations_meteo(mesure_solaire) WHERE mesure_solaire = TRUE;
-CREATE INDEX IF NOT EXISTS idx_stations_meteo_eolien 
+CREATE INDEX IF NOT EXISTS idx_stations_meteo_eolien
     ON ref.stations_meteo(mesure_eolien) WHERE mesure_eolien = TRUE;
 
 
@@ -62,26 +62,26 @@ CREATE TABLE IF NOT EXISTS gold.installations_meteo (
     station_meteo_lon       DOUBLE PRECISION,
     distance_station_km     DOUBLE PRECISION,
     updated_at              TIMESTAMP DEFAULT NOW(),
-    
+
     -- Foreign key to stations_meteo (optional, station can be NULL)
-    CONSTRAINT fk_station_meteo 
-        FOREIGN KEY (station_meteo_id) 
+    CONSTRAINT fk_station_meteo
+        FOREIGN KEY (station_meteo_id)
         REFERENCES ref.stations_meteo(id)
         ON DELETE SET NULL
 );
 
 -- Index for filtering by energy type
-CREATE INDEX IF NOT EXISTS idx_installations_type_energie 
+CREATE INDEX IF NOT EXISTS idx_installations_type_energie
     ON gold.installations_meteo(type_energie);
 
 -- Index for geographic queries
-CREATE INDEX IF NOT EXISTS idx_installations_coords 
+CREATE INDEX IF NOT EXISTS idx_installations_coords
     ON gold.installations_meteo(centroid_lat, centroid_lon);
 
 -- Index for regional analysis
-CREATE INDEX IF NOT EXISTS idx_installations_region 
+CREATE INDEX IF NOT EXISTS idx_installations_region
     ON gold.installations_meteo(region);
 
 -- Index for station lookups
-CREATE INDEX IF NOT EXISTS idx_installations_station 
+CREATE INDEX IF NOT EXISTS idx_installations_station
     ON gold.installations_meteo(station_meteo_id);

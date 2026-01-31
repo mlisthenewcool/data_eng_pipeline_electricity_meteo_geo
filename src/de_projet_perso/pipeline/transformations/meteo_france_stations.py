@@ -1,11 +1,10 @@
-"""Transformations for Météo France stations dataset."""
+"""Transformations for Meteo France stations dataset."""
 
 from pathlib import Path
 
 import polars as pl
 
 from de_projet_perso.core.logger import logger
-from de_projet_perso.pipeline.transformations import register_bronze, register_silver
 from de_projet_perso.pipeline.validators import validate_meteo_france_stations
 
 # Parameters relevant for solar energy production
@@ -42,9 +41,8 @@ PARAMS_EOLIENS = [
 ]
 
 
-@register_bronze("meteo_france_stations")
 def transform_bronze(landing_path: Path) -> pl.DataFrame:
-    """Bronze transformation for Météo France stations.
+    """Bronze transformation for Meteo France stations.
 
     Simply reads JSON and converts to Parquet format.
 
@@ -58,9 +56,8 @@ def transform_bronze(landing_path: Path) -> pl.DataFrame:
     return pl.read_json(landing_path)
 
 
-@register_silver("meteo_france_stations")
 def transform_silver(latest_bronze_path: Path) -> pl.DataFrame:
-    """Silver transformation for Météo France stations.
+    """Silver transformation for Meteo France stations.
 
     Flattens nested structures and enriches with renewable energy flags.
 

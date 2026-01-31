@@ -37,11 +37,15 @@ from pydantic import Field
 
 from de_projet_perso.core.models import StrictModel
 from de_projet_perso.core.settings import settings
-from de_projet_perso.pipeline.results import SilverResult
+from de_projet_perso.pipeline.results import SilverStageResult
 
 
-class RunRecord(SilverResult):
-    """Enregistrement d'une exécution réussie."""
+class SuccessfulRunRecord(SilverStageResult):
+    """Record of a successful pipeline run.
+
+    Extends SilverStageResult with timestamp to track when the run completed.
+    Used by DatasetPipelineState to store the most recent successful execution.
+    """
 
     timestamp: datetime = Field(default_factory=datetime.now)
 
@@ -61,7 +65,18 @@ class RunRecord(SilverResult):
 
 
 class FailedRunRecord(StrictModel):
-    """Enregistrement d'une exécution échouée."""
+    """Record of a failed pipeline run.
+
+    Captures error information to help with debugging and retry logic.
+    Currently defined but not yet used in pipeline logic (future enhancement).
+
+    Attributes:
+        timestamp: When the failure occurred
+        version: Dataset version that failed
+        stage_failed: Pipeline stage where error occurred (ingest/bronze/silver)
+        error: Error message
+        traceback: Full exception traceback if available
+    """
 
     timestamp: datetime = Field(default_factory=datetime.now)
     version: str
@@ -71,14 +86,27 @@ class FailedRunRecord(StrictModel):
     traceback: str | None = None
 
 
-class PipelineState(StrictModel):
-    """État complet d'un pipeline."""
+class DatasetPipelineState(StrictModel):
+    """Complete state of a dataset pipeline.
+
+    Stores the current state and execution history for a single dataset.
+    This state is persisted to data/_state/{dataset_name}.json and drives
+    pipeline decision logic (FORCE/HEAL/RETRY/REFRESH/SKIP).
+
+    Attributes:
+        dataset_name: Dataset identifier
+        current_version: Most recent version processed
+        last_successful_run: Details of the last successful execution (if any)
+
+    Note:
+        Future enhancements may include last_failed_run and full history tracking.
+    """
 
     dataset_name: str
     current_version: str
-    last_successful_run: RunRecord | None = None
-    # last_failed_run: FailedRunRecord | None = None # TODO: implémenter logique
-    # history: list[dict] = [] # TODO: implémenter logique
+    last_successful_run: SuccessfulRunRecord | None = None
+    # last_failed_run: FailedRunRecord | None = None # TODO: implement logic
+    # history: list[dict] = [] # TODO: implement logic
 
 
 class PipelineStateManager:
@@ -90,27 +118,27 @@ class PipelineStateManager:
         return settings.data_state_dir_path / f"{dataset_name}.json"
 
     @classmethod
-    def load(cls, dataset_name: str) -> PipelineState | None:
+    def load(cls, dataset_name: str) -> DatasetPipelineState | None:
         """Charge l'état depuis le fichier JSON."""
         path = cls.get_state_path(dataset_name)
         if not path.exists():
             return None
-        return PipelineState.model_validate_json(path.read_text())
+        return DatasetPipelineState.model_validate_json(path.read_text())
 
     @classmethod
-    def create_new(cls, dataset_name: str, version: str) -> PipelineState:
+    def create_new(cls, dataset_name: str, version: str) -> DatasetPipelineState:
         """Crée un nouvel état."""
-        return PipelineState(dataset_name=dataset_name, current_version=version)
+        return DatasetPipelineState(dataset_name=dataset_name, current_version=version)
 
     @classmethod
-    def save(cls, state: PipelineState):
+    def save(cls, state: DatasetPipelineState):
         """Sauvegarde l'état dans le fichier JSON."""
         path = cls.get_state_path(state.dataset_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(state.model_dump_json(indent=2, exclude_none=True))
 
     @classmethod
-    def update_success(cls, dataset_name: str, data: SilverResult) -> None:
+    def update_success(cls, dataset_name: str, data: SilverStageResult) -> None:
         """Update pipeline state after successful run.
 
         Args:
@@ -122,6 +150,6 @@ class PipelineStateManager:
         if not state:
             state = cls.create_new(dataset_name, data.version)
 
-        state.last_successful_run = RunRecord.model_validate(data.model_dump())
+        state.last_successful_run = SuccessfulRunRecord.model_validate(data.model_dump())
 
         cls.save(state)

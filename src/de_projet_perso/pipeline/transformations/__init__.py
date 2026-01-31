@@ -1,136 +1,110 @@
 """Transformation registry for dataset-specific processing.
 
-This module provides a registration system for bronze and silver transformations.
-Each dataset can register custom transformation functions that will be applied
-during pipeline execution.
+Each dataset has a module at transformations/{dataset_name}.py exposing
+one or more of these functions by convention:
+
+    - transform_bronze(landing_path: Path) -> pl.DataFrame
+    - transform_silver(latest_bronze_path: Path) -> pl.DataFrame
+    - transform_gold(**kwargs) -> pl.DataFrame
+
+The module filename must match the dataset_name from the catalog.
+Transforms are loaded lazily via importlib when first requested.
 
 Example:
-    from pathlib import Path
+    # transformations/my_dataset.py
+    def transform_bronze(landing_path: Path) -> pl.DataFrame:
+        return pl.read_parquet(landing_path)
 
-    @register_bronze("my_dataset")
-    def transform(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
-        df = pl.read_parquet(landing_path)
+    def transform_silver(latest_bronze_path: Path) -> pl.DataFrame:
+        df = pl.read_parquet(latest_bronze_path)
         return df.filter(pl.col("status") == "active")
 """
 
+import importlib
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import polars as pl
 
-# Bronze transforms receive the landing file path
+# Type aliases for transform function signatures
 BronzeTransformFunc = Callable[[Path], pl.DataFrame]
-
-# Silver transforms receive latest bronze path
 SilverTransformFunc = Callable[[Path], pl.DataFrame]
+GoldTransformFunc = Callable[..., pl.DataFrame]
 
-# Legacy type alias for backward compatibility
-TransformFunction = BronzeTransformFunc
-
-# Private registries
-_BRONZE_TRANSFORMS: dict[str, BronzeTransformFunc] = {}
-_SILVER_TRANSFORMS: dict[str, SilverTransformFunc] = {}
+_BASE_MODULE = "de_projet_perso.pipeline.transformations"
 
 
-def register_bronze(dataset_name: str):
-    """Decorator to register a bronze layer transformation.
-
-    Bronze transformations receive:
-    - dataset: Dataset configuration from catalog
-    - landing_path: Actual path to the landing file (with original filename)
+def _load_transform(dataset_name: str, func_name: str) -> Callable[..., pl.DataFrame]:
+    """Import a dataset module and return the named transform function.
 
     Args:
-        dataset_name: Dataset identifier (must match catalog key)
-
-    Example:
-        from pathlib import Path
-
-        @register_bronze("ign_contours_iris")
-        def transform(dataset: Dataset, landing_path: Path) -> pl.DataFrame:
-            # Read from actual landing file (preserves original filename)
-            df = pl.read_parquet(landing_path)
-            return df.filter(pl.col("code_iris").is_not_null())
-    """
-
-    def decorator(func: BronzeTransformFunc) -> BronzeTransformFunc:
-        _BRONZE_TRANSFORMS[dataset_name] = func
-        return func
-
-    return decorator
-
-
-def register_silver(dataset_name: str):
-    """Decorator to register a silver layer transformation.
-
-    Silver transformations receive only the dataset configuration.
-    They read from the standardized bronze path.
-
-    Args:
-        dataset_name: Dataset identifier (must match catalog key)
-
-    Example:
-        @register_silver("ign_contours_iris")
-        def transform(dataset: Dataset) -> pl.DataFrame:
-            # Read from bronze (standardized path)
-            bronze_path = dataset.get_bronze_path()
-            df = pl.read_parquet(bronze_path)
-            return df.with_columns([pl.col("area").cast(pl.Float64)])
-    """
-
-    def decorator(func: SilverTransformFunc) -> SilverTransformFunc:
-        _SILVER_TRANSFORMS[dataset_name] = func
-        return func
-
-    return decorator
-
-
-def get_bronze_transform(dataset_name: str) -> BronzeTransformFunc | None:
-    """Get registered bronze transformation for a dataset.
-
-    Args:
-        dataset_name: Dataset identifier
+        dataset_name: Dataset identifier (must match a module filename).
+        func_name: Function to retrieve (transform_bronze, transform_silver, transform_gold).
 
     Returns:
-        Bronze transformation function or None if not registered
+        The transform function from the dataset module.
+
+    Raises:
+        ModuleNotFoundError: If no module exists for dataset_name.
+        AttributeError: If the module doesn't expose func_name.
     """
-    return _BRONZE_TRANSFORMS.get(dataset_name)
+    module = importlib.import_module(f"{_BASE_MODULE}.{dataset_name}")
+    return getattr(module, func_name)
 
 
-def get_silver_transform(dataset_name: str) -> SilverTransformFunc | None:
-    """Get registered silver transformation for a dataset.
+def get_bronze_transform(dataset_name: str) -> BronzeTransformFunc:
+    """Load the bronze transform for a dataset.
 
     Args:
-        dataset_name: Dataset identifier
+        dataset_name: Dataset identifier (e.g., "ign_contours_iris").
 
     Returns:
-        Silver transformation function or None if not registered
+        Bronze transformation function.
+
+    Raises:
+        ModuleNotFoundError: If no transformation module exists for this dataset.
+        AttributeError: If the module doesn't expose transform_bronze.
     """
-    return _SILVER_TRANSFORMS.get(dataset_name)
+    return _load_transform(dataset_name, "transform_bronze")
 
 
-# TODO: fast-fail
-# Import all transformation modules to trigger registration
-# Add new transformation modules here as you create them
-try:
-    from de_projet_perso.pipeline.transformations import (  # noqa: F401
-        ign_contours_iris,
-        meteo_france_stations,
-        odre_eco2mix_cons_def,
-        odre_eco2mix_tr,
-        odre_installations,
-    )
-except ImportError as e:
-    # Fail gracefully if transformation modules don't exist yet
-    import warnings
+def get_silver_transform(dataset_name: str) -> SilverTransformFunc:
+    """Load the silver transform for a dataset.
 
-    warnings.warn(f"Some transformation modules could not be loaded: {e}")
+    Args:
+        dataset_name: Dataset identifier (e.g., "ign_contours_iris").
+
+    Returns:
+        Silver transformation function.
+
+    Raises:
+        ModuleNotFoundError: If no transformation module exists for this dataset.
+        AttributeError: If the module doesn't expose transform_silver.
+    """
+    return _load_transform(dataset_name, "transform_silver")
+
+
+def get_gold_transform(dataset_name: str) -> GoldTransformFunc:
+    """Load the gold transform for a dataset.
+
+    Args:
+        dataset_name: Dataset identifier (e.g., "installations_meteo").
+
+    Returns:
+        Gold transformation function.
+
+    Raises:
+        ModuleNotFoundError: If no transformation module exists for this dataset.
+        AttributeError: If the module doesn't expose transform_gold.
+    """
+    return _load_transform(dataset_name, "transform_gold")
 
 
 __all__ = [
-    "register_bronze",
-    "register_silver",
-    "get_bronze_transform",
-    "get_silver_transform",
     "BronzeTransformFunc",
+    "GoldTransformFunc",
     "SilverTransformFunc",
+    "get_bronze_transform",
+    "get_gold_transform",
+    "get_silver_transform",
 ]
