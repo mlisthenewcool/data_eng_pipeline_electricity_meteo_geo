@@ -74,7 +74,6 @@ def _create_dag(dataset_name: str, asset: Asset) -> DAG:
 
 
 def _generate_all_dags() -> dict[str, DAG]:
-    """TODO."""
     try:
         catalog = DataCatalog.load(settings.data_catalog_file_path)
     except InvalidCatalogError as e:
@@ -87,22 +86,22 @@ def _generate_all_dags() -> dict[str, DAG]:
 
     pipelines: dict[str, DAG] = {}
 
-    for name, dataset in catalog.datasets.items():
+    # Only remote datasets have Silver assets — derived (Gold) datasets are excluded
+    for dataset in catalog.get_remote_datasets():
         try:
             asset = ASSETS_SILVER[dataset.name]
+            dag_obj = _create_dag(dataset.name, asset)
 
-            dag_id = f"dag_{name}"
-            dag_obj = _create_dag(name, asset)
-
-            pipelines[name] = dag_obj
-            logger.info(f"Created dataset load to postgres DAG: {dag_id}")
+            pipelines[dataset.name] = dag_obj
+            logger.info(
+                f"Created dataset load to postgres DAG: load_silver_into_postgres_{dataset.name}"
+            )
 
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
-            logger.exception(f"Failed to create DAG for {name}", extra={"error": error_msg})
-            # Create individual error DAG with unique ID
-            pipelines[f"{name}_error"] = create_error_dag(
-                dag_id=f"ERROR_LOADING_DAG_{name}", error_message=error_msg
+            logger.exception(f"Failed to create DAG for {dataset.name}", extra={"error": error_msg})
+            pipelines[f"{dataset.name}_error"] = create_error_dag(
+                dag_id=f"ERROR_LOADING_DAG_{dataset.name}", error_message=error_msg
             )
 
     return pipelines

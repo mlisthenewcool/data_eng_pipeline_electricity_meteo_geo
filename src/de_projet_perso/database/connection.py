@@ -12,14 +12,20 @@ from typing import Generator
 import psycopg
 
 from de_projet_perso.core.logger import logger
+from de_projet_perso.core.settings import settings
 
 # Docker secrets paths
-SECRETS_DIR = Path("/run/secrets")
-SECRET_USERNAME = SECRETS_DIR / "postgres_root_username"
-SECRET_PASSWORD = SECRETS_DIR / "postgres_root_password"
+_file_extension = "" if settings.is_running_on_airflow else ".txt"
+SECRET_USERNAME = settings.secrets_dir_path / f"postgres_root_username{_file_extension}"
+SECRET_PASSWORD = settings.secrets_dir_path / f"postgres_root_password{_file_extension}"
 
 # Database configuration
-DATABASE_HOST = "postgres_service"  # Docker service name
+
+if settings.is_running_on_airflow:
+    DATABASE_HOST = "postgres_service"  # Docker service name
+else:
+    DATABASE_HOST = "127.0.0.1"
+
 DATABASE_PORT = 5432
 DATABASE_NAME = "projet_energie"
 

@@ -14,7 +14,6 @@ Requirements:
 """
 
 import time
-from datetime import datetime
 
 import polars as pl
 from psycopg import sql
@@ -35,16 +34,16 @@ def generate_test_data(n_rows: int) -> pl.DataFrame:
     """
     return pl.DataFrame(
         {
-            "id_station": [f"STATION_{i:06d}" for i in range(n_rows)],
-            "nom_usuel": [f"Station Test {i}" for i in range(n_rows)],
+            "id": [f"STATION_{i:06d}" for i in range(n_rows)],
+            "nom": [f"Station Test {i}" for i in range(n_rows)],
             "latitude": [45.0 + (i * 0.001) for i in range(n_rows)],
             "longitude": [2.0 + (i * 0.001) for i in range(n_rows)],
             "altitude": [i % 2000 for i in range(n_rows)],
-            "date_debut": [datetime(2020, 1, 1)] * n_rows,
-            "date_fin": [None] * n_rows,
-            "type_poste": ["SYNOP"] * n_rows,
-            "region": ["Auvergne-Rhone-Alpes"] * n_rows,
-            "departement": ["Puy-de-Dome"] * n_rows,
+            # "date_debut": [datetime(2020, 1, 1)] * n_rows,
+            # "date_fin": [None] * n_rows,
+            # "type_poste": ["SYNOP"] * n_rows,
+            # "region": ["Auvergne-Rhone-Alpes"] * n_rows,
+            # "departement": ["Puy-de-Dome"] * n_rows,
         }
     )
 

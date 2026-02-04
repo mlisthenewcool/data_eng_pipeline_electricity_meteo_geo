@@ -1,4 +1,4 @@
-"""todo."""
+"""File operations for medallion architecture (symlinks, rotation, rollback, cleanup)."""
 
 import os
 import shutil
@@ -13,29 +13,12 @@ from de_projet_perso.core.settings import settings
 
 @dataclass(frozen=True)
 class FileManager:
-    """TODO."""
+    """File operations companion to PathResolver: symlinks, rotation, rollback, cleanup."""
 
     resolver: PathResolver
 
     def update_bronze_latest_link(self, target_version: str) -> None:
-        """Update 'latest.parquet' symlink to point to the newest bronze version.
-
-        This should be called AFTER successfully writing a new bronze file.
-        The operation is atomic (uses atomic rename).
-
-        Args:
-            target_version: Specific version to link to, or None for current run_version
-
-        Raises:
-            FileNotFoundError: If target bronze file doesn't exist
-
-        Example:
-            # After writing bronze
-            bronze_path = resolver.bronze_path
-            df.write_parquet(bronze_path)
-            version = ...
-            resolver.update_bronze_latest_link(version)  # Update symlink
-        """
+        """Atomically update latest.parquet symlink. Call AFTER writing a new bronze file."""
         target_file = self.resolver.bronze_path(version=target_version)
         latest_link = self.resolver.bronze_latest_path
 
@@ -79,18 +62,7 @@ class FileManager:
     def cleanup_old_bronze_versions(
         self, retention_days: int = settings.bronze_retention_days
     ) -> list[Path]:
-        """Remove bronze versions older than retention period.
-
-        Args:
-            retention_days: Number of days to keep (default: 1 year)
-
-        Returns:
-            List of deleted file paths
-
-        Note:
-            This should be called by a separate Airflow maintenance DAG,
-            not during pipeline execution.
-        """
+        """Remove bronze versions older than retention period. Called by maintenance DAG."""
         cutoff_time = datetime.now() - timedelta(days=retention_days)
         deleted = []
 
@@ -117,15 +89,7 @@ class FileManager:
         return deleted
 
     def rollback_silver(self) -> bool:
-        """Rollback silver: restore backup → current.
-
-        Returns:
-            True if rollback succeeded, False if no backup exists
-
-        Use case:
-            If new silver transformation produces invalid data,
-            quickly restore previous version without reprocessing.
-        """
+        """Restore backup → current. Returns False if no backup exists."""
         if not self.resolver.silver_backup_path.exists():
             logger.warning(
                 "Cannot rollback silver: no backup exists",
@@ -145,15 +109,7 @@ class FileManager:
         return True
 
     def rotate_silver(self) -> None:
-        """Rotate silver files: current → backup (before writing new current).
-
-        This should be called BEFORE writing the new silver current file.
-        If current exists, it becomes backup (old backup is overwritten).
-
-        Example workflow:
-            1. resolver.rotate_silver()  # current → backup
-            2. df.write_parquet(resolver.silver_current_path())  # New current
-        """
+        """Copy current → backup. Call BEFORE writing new current."""
         if self.resolver.silver_current_path.exists():
             # Copy current to back up (overwrite old backup)
             self.resolver.silver_backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -168,16 +124,7 @@ class FileManager:
             )
 
     def rotate_gold(self) -> None:
-        """Rotate gold files: current → backup (before writing new current).
-
-        This should be called BEFORE writing the new gold current file.
-        If current exists, it becomes backup (old backup is overwritten).
-        Similar to rotate_silver() but for Gold layer.
-
-        Example workflow:
-            1. file_manager.rotate_gold()  # current → backup
-            2. df.write_parquet(resolver.gold_current_path)  # New current
-        """
+        """Copy current → backup. Call BEFORE writing new current."""
         if self.resolver.gold_current_path.exists():
             # Copy current to backup (overwrite old backup)
             self.resolver.gold_backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,15 +139,7 @@ class FileManager:
             )
 
     def rollback_gold(self) -> bool:
-        """Rollback gold: restore backup → current.
-
-        Returns:
-            True if rollback succeeded, False if no backup exists
-
-        Use case:
-            If new gold transformation produces invalid data,
-            quickly restore previous version without reprocessing.
-        """
+        """Restore backup → current. Returns False if no backup exists."""
         if not self.resolver.gold_backup_path.exists():
             logger.warning(
                 "Cannot rollback gold: no backup exists",

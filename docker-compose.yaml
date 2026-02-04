@@ -46,9 +46,10 @@ services:
       # reference : https://airflow.apache.org/docs/docker-stack/build-arg-ref.html
       # AIRFLOW_USE_UV: True # TODO: try this later
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      # AIRFLOW_CONN_POSTGRES_DEFAULT
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD: >
         bash -c 'printf "postgresql+psycopg://%s:%s@postgres_service/airflow" "$$(cat /run/secrets/postgres_root_username)" "$$(cat /run/secrets/postgres_root_password)"'
+      # AIRFLOW_CONN_POSTGRES_PROJET_ENERGIE is exported by airflow-entrypoint.sh
+      # (AIRFLOW_CONN_*_CMD is not supported, only AIRFLOW__*_CMD is)
       AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Paris
       PYTHONPATH: /opt/airflow/src # required to let Airflow reach code written in src/
       AIRFLOW__CORE__LOAD_EXAMPLES: False
@@ -58,6 +59,11 @@ services:
       # PROJ_NETWORK: "OFF" # Prevent PROJ from blocking on network calls inside DuckDB spatial
       AIRFLOW__DAG_PROCESSOR__BUNDLE_REFRESH_CHECK_INTERVAL: 5 # by default
       # AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/src/de_projet_perso/airflow/dags # TODO: prod ?
+
+      # Required by PyJWT >= 2.11 which enforces that the JWT "iss" claim is a string.
+      # Without this, Airflow's SimpleAuthManager passes an empty list as issuer,
+      # causing a TypeError on login (HTTP 500).
+      AIRFLOW__API_AUTH__JWT_ISSUER: "airflow-standalone"
 
       AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: 1 # prevent file conflicts within same dataset
       AIRFLOW__CORE__PARALLELISM: 32 # by default
@@ -76,6 +82,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s # 60s
+    entrypoint: ["/airflow-entrypoint.sh"]
     command: standalone
     secrets:
       - postgres_root_password

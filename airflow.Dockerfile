@@ -21,6 +21,9 @@ RUN apt-get update \
 RUN mkdir -p /opt/airflow/data && chown -R airflow:root /opt/airflow/data
 # COPY data/catalog.yaml /opt/airflow/data/catalog.yaml
 
+COPY airflow-entrypoint.sh /airflow-entrypoint.sh
+RUN chmod +x /airflow-entrypoint.sh
+
 USER airflow
 RUN pip install --no-cache-dir --upgrade uv
 RUN uv python upgrade

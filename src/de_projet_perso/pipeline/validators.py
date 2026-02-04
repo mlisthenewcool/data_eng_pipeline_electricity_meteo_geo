@@ -5,6 +5,12 @@ Validators are called at the end of each Silver transformation to ensure
 data quality and schema compliance (fail-fast at source).
 
 Each validator raises a ValueError with a clear message if validation fails.
+
+Architecture:
+    Each dataset has a single source of truth schema (SCHEMA_*) defining
+    the exact columns and types expected in Silver output. The _check_exact_schema()
+    function validates that DataFrames have EXACTLY these columns (no more, no less)
+    with the correct types and order.
 """
 
 from typing import cast
@@ -12,6 +18,144 @@ from typing import cast
 import polars as pl
 
 from de_projet_perso.core.logger import logger
+
+# =============================================================================
+# Schema Definitions (Single Source of Truth)
+# =============================================================================
+# These schemas define the EXACT expected structure of Silver DataFrames.
+# They are used by transformations (to select columns) and validators (to enforce).
+
+SCHEMA_IGN_CONTOURS_IRIS = pl.Schema(
+    {
+        "code_iris": pl.String,
+        "nom_iris": pl.String,
+        "code_insee": pl.String,
+        "nom_commune": pl.String,
+        "type_iris": pl.String,
+        "geom_wkb": pl.Binary,
+        "centroid_lat": pl.Float64,
+        "centroid_lon": pl.Float64,
+    }
+)
+
+SCHEMA_METEO_FRANCE_STATIONS = pl.Schema(
+    {
+        "id": pl.String,
+        "nom": pl.String,
+        "lieu_dit": pl.String,
+        "bassin": pl.String,
+        "date_debut": pl.Date,
+        "latitude": pl.Float64,
+        "longitude": pl.Float64,
+        "altitude": pl.Int64,
+        "mesure_solaire": pl.Boolean,
+        "mesure_eolien": pl.Boolean,
+        "params_solaires": pl.List(pl.String),
+        "params_eoliens": pl.List(pl.String),
+        "nb_parametres": pl.UInt32,
+    }
+)
+
+SCHEMA_ODRE_INSTALLATIONS = pl.Schema(
+    {
+        "id_peps": pl.String,
+        "nom_installation": pl.String,
+        "code_iris": pl.String,
+        "code_insee": pl.String,
+        "commune": pl.String,
+        "code_departement": pl.String,
+        "departement": pl.String,
+        "code_region": pl.String,
+        "region": pl.String,
+        "code_filiere": pl.String,
+        "filiere": pl.String,
+        "code_technologie": pl.String,
+        "technologie": pl.String,
+        "puissance_max_installee": pl.Float64,
+        "puissance_max_raccordement": pl.Float64,
+        "nb_groupes": pl.Int64,
+        "date_mise_en_service": pl.Date,
+        "date_raccordement": pl.Date,
+        "date_deraccordement": pl.Date,
+        "regime": pl.String,
+        "gestionnaire": pl.String,
+        "code_epci": pl.String,
+        "epci": pl.String,
+        "est_renouvelable": pl.Boolean,
+        "type_energie": pl.String,
+        "est_actif": pl.Boolean,
+    }
+)
+
+SCHEMA_ODRE_ECO2MIX_TR = pl.Schema(
+    {
+        "code_insee_region": pl.String,
+        "libelle_region": pl.String,
+        "nature": pl.String,
+        "date": pl.String,
+        "heure": pl.String,
+        "date_heure": pl.Datetime("ms", "Europe/Berlin"),
+        "consommation": pl.Int64,
+        "thermique": pl.Int64,
+        "nucleaire": pl.Int64,
+        "eolien": pl.Int64,
+        "solaire": pl.Int64,
+        "hydraulique": pl.Int64,
+        "pompage": pl.String,
+        "bioenergies": pl.Int64,
+        "ech_physiques": pl.Int64,
+        "stockage_batterie": pl.String,
+        "destockage_batterie": pl.String,
+        "tco_thermique": pl.Float64,
+        "tch_thermique": pl.Float64,
+        "tco_nucleaire": pl.Float64,
+        "tch_nucleaire": pl.Float64,
+        "tco_eolien": pl.Float64,
+        "tch_eolien": pl.Float64,
+        "tco_solaire": pl.Float64,
+        "tch_solaire": pl.Float64,
+        "tco_hydraulique": pl.Float64,
+        "tch_hydraulique": pl.Float64,
+        "tco_bioenergies": pl.Float64,
+        "tch_bioenergies": pl.Float64,
+    }
+)
+
+SCHEMA_ODRE_ECO2MIX_CONS_DEF = pl.Schema(
+    {
+        "code_insee_region": pl.String,
+        "libelle_region": pl.String,
+        "nature": pl.String,
+        "date": pl.String,
+        "heure": pl.String,
+        "date_heure": pl.Datetime("ms", "Europe/Berlin"),
+        "consommation": pl.Int64,
+        "thermique": pl.Int64,
+        "nucleaire": pl.Int64,
+        "eolien": pl.String,  # String in consolidated data
+        "solaire": pl.Int64,
+        "hydraulique": pl.Int64,
+        "pompage": pl.Int64,
+        "bioenergies": pl.Int64,
+        "ech_physiques": pl.Int64,
+        "stockage_batterie": pl.Int64,
+        "destockage_batterie": pl.Int64,
+        "eolien_terrestre": pl.Int64,
+        "eolien_offshore": pl.Int64,
+        "tco_thermique": pl.Float64,
+        "tch_thermique": pl.Float64,
+        "tco_nucleaire": pl.Float64,
+        "tch_nucleaire": pl.Float64,
+        "tco_eolien": pl.Float64,
+        "tch_eolien": pl.Float64,
+        "tco_solaire": pl.Float64,
+        "tch_solaire": pl.Float64,
+        "tco_hydraulique": pl.Float64,
+        "tch_hydraulique": pl.Float64,
+        "tco_bioenergies": pl.Float64,
+        "tch_bioenergies": pl.Float64,
+    }
+)
 
 
 class SilverValidationError(ValueError):
@@ -26,6 +170,69 @@ class SilverValidationError(ValueError):
         """
         self.dataset_name = dataset_name
         super().__init__(f"Silver validation failed for '{dataset_name}': {message}")
+
+
+def _check_exact_schema(
+    df: pl.DataFrame,
+    dataset_name: str,
+    expected_schema: pl.Schema,
+) -> None:
+    """Validate that DataFrame has EXACTLY the expected schema.
+
+    Checks:
+    - No extra columns (DataFrame has columns not in schema)
+    - No missing columns (Schema defines columns not in DataFrame)
+    - Correct types for all columns
+    - Correct column order
+
+    Args:
+        df: DataFrame to validate
+        dataset_name: Name for error messages
+        expected_schema: Expected Polars schema (ordered dict of column -> dtype)
+
+    Raises:
+        SilverValidationError: If schema doesn't match exactly
+    """
+    actual_columns = df.columns
+    expected_columns = list(expected_schema.names())
+
+    # Check for extra columns
+    extra = set(actual_columns) - set(expected_columns)
+    if extra:
+        raise SilverValidationError(
+            dataset_name,
+            f"Unexpected columns in DataFrame: {sorted(extra)}. "
+            f"Remove these columns in the transformation.",
+        )
+
+    # Check for missing columns
+    missing = set(expected_columns) - set(actual_columns)
+    if missing:
+        raise SilverValidationError(
+            dataset_name,
+            f"Missing required columns: {sorted(missing)}. "
+            f"Available columns: {sorted(actual_columns)}",
+        )
+
+    # Check column order
+    if actual_columns != expected_columns:
+        raise SilverValidationError(
+            dataset_name,
+            f"Column order mismatch. Expected: {expected_columns}, Got: {actual_columns}",
+        )
+
+    # Check types
+    type_errors = []
+    for col_name, expected_dtype in expected_schema.items():
+        actual_dtype = df.schema[col_name]
+        if actual_dtype != expected_dtype:
+            type_errors.append(f"{col_name}: expected {expected_dtype}, got {actual_dtype}")
+
+    if type_errors:
+        raise SilverValidationError(
+            dataset_name,
+            f"Column type mismatches: {'; '.join(type_errors)}",
+        )
 
 
 def _check_required_columns(
@@ -196,9 +403,8 @@ def validate_ign_contours_iris(df: pl.DataFrame) -> None:
     """Validate Silver output for ign_contours_iris dataset.
 
     Checks:
-    - Required columns present
+    - Exact schema match (columns, types, order)
     - Non-empty
-    - Correct types for centroid columns
     - Geographic bounds for centroids
     - No entirely null critical columns
 
@@ -210,25 +416,8 @@ def validate_ign_contours_iris(df: pl.DataFrame) -> None:
     """
     dataset_name = "ign_contours_iris"
 
-    required_columns = [
-        "code_iris",
-        "nom_iris",
-        "code_insee",
-        "nom_commune",
-        "type_iris",
-        "centroid_lat",
-        "centroid_lon",
-    ]
-
-    expected_types: dict[str, type[pl.DataType]] = {
-        "code_iris": pl.String,
-        "centroid_lat": pl.Float64,
-        "centroid_lon": pl.Float64,
-    }
-
-    _check_required_columns(df, dataset_name, required_columns)
+    _check_exact_schema(df, dataset_name, SCHEMA_IGN_CONTOURS_IRIS)
     _check_non_empty(df, dataset_name)
-    _check_column_types(df, dataset_name, expected_types)
     _check_geographic_bounds(df, dataset_name, "centroid_lat", "centroid_lon")
     _check_no_all_nulls(df, dataset_name, ["code_iris", "centroid_lat", "centroid_lon"])
 
@@ -242,9 +431,8 @@ def validate_meteo_france_stations(df: pl.DataFrame) -> None:
     """Validate Silver output for meteo_france_stations dataset.
 
     Checks:
-    - Required columns present
+    - Exact schema match (columns, types, order)
     - Non-empty
-    - Correct types for coordinates and flags
     - Geographic bounds for station coordinates
     - No entirely null critical columns
 
@@ -256,28 +444,8 @@ def validate_meteo_france_stations(df: pl.DataFrame) -> None:
     """
     dataset_name = "meteo_france_stations"
 
-    required_columns = [
-        "id",
-        "nom",
-        "latitude",
-        "longitude",
-        "altitude",
-        "mesure_solaire",
-        "mesure_eolien",
-    ]
-
-    expected_types: dict[str, type[pl.DataType]] = {
-        "id": pl.String,
-        "latitude": pl.Float64,
-        "longitude": pl.Float64,
-        "altitude": pl.Int64,
-        "mesure_solaire": pl.Boolean,
-        "mesure_eolien": pl.Boolean,
-    }
-
-    _check_required_columns(df, dataset_name, required_columns)
+    _check_exact_schema(df, dataset_name, SCHEMA_METEO_FRANCE_STATIONS)
     _check_non_empty(df, dataset_name)
-    _check_column_types(df, dataset_name, expected_types)
     _check_geographic_bounds(df, dataset_name, "latitude", "longitude")
     _check_no_all_nulls(df, dataset_name, ["id", "latitude", "longitude"])
 
@@ -295,9 +463,8 @@ def validate_odre_installations(df: pl.DataFrame) -> None:
     """Validate Silver output for odre_installations dataset.
 
     Checks:
-    - Required columns present
+    - Exact schema match (columns, types, order)
     - Non-empty
-    - Correct types for key columns
     - No entirely null critical columns
 
     Args:
@@ -308,29 +475,8 @@ def validate_odre_installations(df: pl.DataFrame) -> None:
     """
     dataset_name = "odre_installations"
 
-    required_columns = [
-        "id_peps",
-        "code_iris",
-        "code_filiere",
-        "filiere",
-        "type_energie",
-        "puissance_max_installee",
-        "est_renouvelable",
-        "est_actif",
-    ]
-
-    expected_types: dict[str, type[pl.DataType]] = {
-        "id_peps": pl.String,
-        "code_iris": pl.String,
-        "code_filiere": pl.String,
-        "puissance_max_installee": pl.Float64,
-        "est_renouvelable": pl.Boolean,
-        "est_actif": pl.Boolean,
-    }
-
-    _check_required_columns(df, dataset_name, required_columns)
+    _check_exact_schema(df, dataset_name, SCHEMA_ODRE_INSTALLATIONS)
     _check_non_empty(df, dataset_name)
-    _check_column_types(df, dataset_name, expected_types)
     _check_no_all_nulls(df, dataset_name, ["id_peps", "code_filiere"])
 
     logger.info(
@@ -340,4 +486,56 @@ def validate_odre_installations(df: pl.DataFrame) -> None:
             "renouvelables": df["est_renouvelable"].sum(),
             "actifs": df["est_actif"].sum(),
         },
+    )
+
+
+def validate_odre_eco2mix_tr(df: pl.DataFrame) -> None:
+    """Validate Silver output for odre_eco2mix_tr dataset.
+
+    Checks:
+    - Exact schema match (columns, types, order)
+    - Non-empty
+    - No entirely null critical columns
+
+    Args:
+        df: Silver DataFrame to validate
+
+    Raises:
+        SilverValidationError: If validation fails
+    """
+    dataset_name = "odre_eco2mix_tr"
+
+    _check_exact_schema(df, dataset_name, SCHEMA_ODRE_ECO2MIX_TR)
+    _check_non_empty(df, dataset_name)
+    _check_no_all_nulls(df, dataset_name, ["code_insee_region", "date_heure", "consommation"])
+
+    logger.info(
+        f"Silver validation passed for {dataset_name}",
+        extra={"rows": len(df), "columns": len(df.columns)},
+    )
+
+
+def validate_odre_eco2mix_cons_def(df: pl.DataFrame) -> None:
+    """Validate Silver output for odre_eco2mix_cons_def dataset.
+
+    Checks:
+    - Exact schema match (columns, types, order)
+    - Non-empty
+    - No entirely null critical columns
+
+    Args:
+        df: Silver DataFrame to validate
+
+    Raises:
+        SilverValidationError: If validation fails
+    """
+    dataset_name = "odre_eco2mix_cons_def"
+
+    _check_exact_schema(df, dataset_name, SCHEMA_ODRE_ECO2MIX_CONS_DEF)
+    _check_non_empty(df, dataset_name)
+    _check_no_all_nulls(df, dataset_name, ["code_insee_region", "date_heure", "consommation"])
+
+    logger.info(
+        f"Silver validation passed for {dataset_name}",
+        extra={"rows": len(df), "columns": len(df.columns)},
     )

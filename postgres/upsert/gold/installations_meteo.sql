@@ -1,53 +1,25 @@
 -- =============================================================================
 -- UPSERT for gold.installations_meteo
--- Source: Gold installations_meteo
--- Strategy: Insert new rows, update existing if data changed
+-- Source: Gold installations_meteo parquet
+-- Strategy: COPY to staging + UPSERT to target
 -- =============================================================================
+-- @target_table: gold.installations_meteo
+-- @primary_key: id_peps
 
 INSERT INTO gold.installations_meteo (
-    id_peps,
-    nom_installation,
-    type_energie,
-    code_filiere,
-    filiere,
-    technologie,
-    puissance_max_installee,
-    commune,
-    departement,
-    region,
-    code_iris,
-    centroid_lat,
-    centroid_lon,
-    date_mise_en_service,
-    station_meteo_id,
-    station_meteo_nom,
-    station_meteo_lat,
-    station_meteo_lon,
-    distance_station_km,
-    updated_at
+    id_peps, nom_installation, type_energie, code_filiere, filiere, technologie,
+    puissance_max_installee, commune, departement, region, code_iris,
+    centroid_lat, centroid_lon, date_mise_en_service,
+    station_meteo_id, station_meteo_nom, station_meteo_lat, station_meteo_lon,
+    distance_station_km, updated_at
 )
-VALUES (
-    %(id_peps)s,
-    %(nom_installation)s,
-    %(type_energie)s,
-    %(code_filiere)s,
-    %(filiere)s,
-    %(technologie)s,
-    %(puissance_max_installee)s,
-    %(commune)s,
-    %(departement)s,
-    %(region)s,
-    %(code_iris)s,
-    %(centroid_lat)s,
-    %(centroid_lon)s,
-    %(date_mise_en_service)s,
-    %(station_meteo_id)s,
-    %(station_meteo_nom)s,
-    %(station_meteo_lat)s,
-    %(station_meteo_lon)s,
-    %(distance_station_km)s,
-    NOW()
-)
+SELECT
+    id_peps, nom_installation, type_energie, code_filiere, filiere, technologie,
+    puissance_max_installee, commune, departement, region, code_iris,
+    centroid_lat, centroid_lon, date_mise_en_service,
+    station_meteo_id, station_meteo_nom, station_meteo_lat, station_meteo_lon,
+    distance_station_km, NOW()
+FROM staging_installations_meteo
 ON CONFLICT (id_peps) DO UPDATE SET
     nom_installation = EXCLUDED.nom_installation,
     type_energie = EXCLUDED.type_energie,

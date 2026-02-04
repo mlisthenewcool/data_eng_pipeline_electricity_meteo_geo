@@ -20,6 +20,7 @@ from airflow.sdk import AssetAny, Metadata, dag, task
 from de_projet_perso.airflow.assets import ASSETS_GOLD, ASSETS_SILVER
 from de_projet_perso.core.data_catalog import DataCatalog, DatasetDerivedConfig
 from de_projet_perso.core.logger import logger
+from de_projet_perso.core.path_resolver import PathResolver
 from de_projet_perso.core.settings import settings
 from de_projet_perso.database.loader import PostgresLoader
 from de_projet_perso.pipeline.derived_manager import DerivedDatasetPipeline
@@ -183,22 +184,12 @@ def gold_installations_meteo_dag():
 
     @task
     def load_to_postgres() -> int:
-        """Load Gold data to PostgreSQL.
+        """Load Gold data to PostgreSQL."""
+        loader = PostgresLoader()
+        loader.initialize_gold_tables()
 
-        Returns:
-            Number of rows loaded
-        """
-        logger.info("Loading Gold installations_meteo to PostgreSQL")
-
-        _loader = PostgresLoader()
-
-        # Ensure schema exists (idempotent)
-        # loader.initialize_schema()
-
-        # Load Gold table
-        # TODO
-        # rows = loader.load("installations_meteo", "gold")
-        rows = 0
+        resolver = PathResolver("installations_meteo")
+        rows = loader.load("installations_meteo", "gold", resolver.gold_current_path)
 
         logger.info(
             "PostgreSQL load completed",

@@ -1,35 +1,13 @@
-"""Logging configuration using Loguru with Airflow compatibility.
+"""Loguru-based logger with extra={} support and automatic Airflow detection.
 
-This module provides a pre-configured logger that automatically adapts its output
-based on the execution environment:
+Adapts output to the execution environment:
+- Terminal: colored output with timestamps and structured extra fields
+- Airflow: plain text routed to Airflow's task logger
 
-- **Terminal**: Colored output with timestamps and structured extra fields
-- **Airflow**: Plain text routed to Airflow's task logger for UI integration
+Usage::
 
-Features:
-    - Supports the standard library's ``extra={}`` pattern for structured context.
-    - **Automatic Stringification**: Thanks to internal sanitization, objects
-      implementing ``__str__`` (like ``pathlib.Path``) are automatically
-      converted to strings. There is no need to wrap them in ``str()`` manually.
-    - **ANSI Safety**: Strips ANSI escape codes from input data to prevent log
-      injection and keep logs clean.
-
-Example:
-    Basic usage with structured context:
-
-        >>> from de_projet_perso.core.logger import logger # noqa
-        ... logger.info("Download started", extra={"url": "https://example.com", "size": 1024})
-        ... logger.error("Failed to connect", extra={"attempt": 3, "max_retries": 5})
-
-    Exception logging:
-
-        >>> try:
-        ...    risky_operation() # noqa
-        ... except Exception: # noqa
-        ...    logger.exception("Operation failed", extra={"context": "pipeline"})
-
-Attributes:
-    logger: Pre-configured singleton logger instance ready for use.
+    from de_projet_perso.core.logger import logger
+    logger.info("Download started", extra={"url": url, "size": 1024})
 """
 
 import logging
@@ -50,15 +28,6 @@ _ON_AIRFLOW = settings.is_running_on_airflow
 
 
 def _should_use_colors() -> bool:
-    """Determine if ANSI escape codes should be used for coloring.
-
-    Colors are disabled in Airflow environments to prevent UI clutter and
-    automatically suppressed if the output stream (stderr) is not a TTY
-    (e.g., when redirecting to a file).
-
-    Returns:
-        True if the environment supports and expects colored output, False otherwise.
-    """
     if _ON_AIRFLOW:
         return False
     return sys.stderr.isatty()
@@ -94,47 +63,15 @@ _FORMAT_AIRFLOW = "{message}{extra_str}"
 
 
 def _is_mutable_record(record: "Record") -> TypeGuard[dict[str, Any]]:
-    """Type guard ensuring record is a mutable dict (always true for Loguru records).
-
-    Loguru always passes dict instances to patcher functions, but this guard
-    helps type checkers understand that record supports item assignment.
-
-    Args:
-        record: Loguru record object (always a dict in practice).
-
-    Returns:
-        True if record supports dict operations (always True for valid records).
-    """
+    """Type guard for Loguru records (always dicts, but helps type checkers)."""
     return isinstance(record, dict)  # or hasattr(record, "__setitem__")
 
 
 def _strip_ansi(text: str) -> str:
-    """Remove ANSI escape sequences from text.
-
-    Prevents log injection attacks where user input could manipulate terminal colors
-    or cursor position.
-
-    Args:
-        text: Input string potentially containing ANSI escape codes.
-
-    Returns:
-        Sanitized string with all ANSI sequences removed.
-    """
     return _ANSI_PATTERN.sub(repl="", string=text)
 
 
 def _safe_str(value: Any) -> str:
-    """Safely convert any value to a sanitized string.
-
-    Handles conversion errors gracefully and strips ANSI codes to prevent
-    log injection.
-
-    Args:
-        value: Any value to convert to string.
-
-    Returns:
-        Sanitized string representation, or ``"<REPR_ERROR>"`` if conversion fails.
-    """
     try:
         return _strip_ansi(text=str(value))
     except Exception:  # noqa
@@ -142,14 +79,6 @@ def _safe_str(value: Any) -> str:
 
 
 def _compute_prefix(level: int) -> str:
-    """Compute the prefix string for structured log output at a given nesting level.
-
-    Args:
-        level: Current nesting depth (0 for top-level extra fields).
-
-    Returns:
-        Formatted prefix string with appropriate indentation and tree character.
-    """
     current_indent = " " * (_INDENT + (level * _INDENT_INCREASE_PER_LEVEL))
     if _ON_AIRFLOW:
         return f"\n{current_indent}└─ "
@@ -158,25 +87,7 @@ def _compute_prefix(level: int) -> str:
 
 
 def _format_value_recursive(value: Any, level: int) -> str:
-    r"""Format a value recursively for structured log output.
-
-    Handles nested dictionaries by recursively formatting them with proper indentation.
-    Non-dict values are converted to sanitized strings. Empty dicts are represented
-    as "{}".
-
-    Args:
-        value: The value to format (dict, list, primitive, or any object).
-        level: Current nesting depth for indentation (0 = top-level).
-
-    Returns:
-        Formatted string with proper indentation, colors (if enabled), and
-        tree-style structure for nested dicts.
-
-    Example:
-        >>> _format_value_recursive({"a": {"b": 1}}, level=0, is_airflow=True)
-        ... 'a => \\n'
-        ... '   └─ b => 1'
-    """
+    """Format a value recursively with tree-style indentation for nested dicts."""
     # Terminal case: non-dict values are converted to safe strings
     if not isinstance(value, dict):
         return _safe_str(value)
@@ -211,20 +122,7 @@ def _format_value_recursive(value: Any, level: int) -> str:
 
 
 def _format_extra(record: "Record") -> None:
-    """Format extra fields and inject them into the log record.
-
-    This is a Loguru patcher function that adds an ``extra_str`` key to the record.
-    The format differs based on environment:
-
-    - Terminal: Colored key-value pairs on separate lines with tree-style indent
-    - Airflow: Plain text key-value pairs for clean UI display
-
-    Nested dictionaries in extra fields are recursively formatted with increased
-    indentation to maintain visual hierarchy.
-
-    Args:
-        record: Loguru record dict to modify in-place.
-    """
+    """Loguru patcher: format extra fields and inject as extra_str into the record."""
     extra = record.get("extra", {})
 
     if not _is_mutable_record(record):
@@ -241,14 +139,7 @@ def _format_extra(record: "Record") -> None:
 
 
 def _airflow_sink(message: "Message") -> None:
-    """Route log messages to Airflow's task logger.
-
-    Extracts the log level from the Loguru message and forwards it to the
-    configured Airflow logger, preserving the correct severity level.
-
-    Args:
-        message: Loguru message object containing the formatted log and metadata.
-    """
+    """Route log messages to Airflow's task logger with correct severity level."""
     record = message.record
     level_name = record["level"].name
     level_no = logging.getLevelName(level=level_name)
@@ -256,55 +147,19 @@ def _airflow_sink(message: "Message") -> None:
 
 
 class LoguruLogger:
-    """Loguru wrapper providing extra={} support and automatic Airflow detection.
-
-    This is a singleton class that configures Loguru once on first instantiation.
-    It bridges the standard library's ``extra={}`` logging pattern with Loguru's
-    ``bind()`` mechanism.
-
-    The logger automatically detects if it's running inside Airflow and adjusts:
-
-    - Output sink (stderr vs Airflow task logger)
-    - Format (colored vs plain text)
-    - Traceback verbosity
-
-    Attributes:
-        _instance: Singleton instance storage.
-        _logger: Configured Loguru logger with patched formatter.
-
-    Example:
-        >>> _logger = LoguruLogger(level="INFO")
-        >>> _logger.info("Hello", extra={"user": "alice"})
-        12:34:56 | INFO     | Hello
-                            └─ user => alice
-    """
+    """Singleton Loguru wrapper bridging stdlib extra={} pattern with Loguru's bind()."""
 
     _instance: Optional["LoguruLogger"] = None
     _logger: "Logger"
 
     def __new__(cls, level: str) -> "LoguruLogger":
-        """Return the singleton instance, creating it on first call.
-
-        Args:
-            level: Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-
-        Returns:
-            The singleton LoguruLogger instance.
-        """
+        """Return singleton instance, creating on first call."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._configure(level)
         return cls._instance
 
     def _configure(self, level: str) -> None:
-        """Configure Loguru sinks and formatters.
-
-        Called once during singleton creation. Sets up the appropriate sink
-        and format based on the detected environment.
-
-        Args:
-            level: Minimum log level to capture.
-        """
         _loguru_logger.remove()
         patched = _loguru_logger.patch(_format_extra)
 
@@ -332,14 +187,6 @@ class LoguruLogger:
     def _log(
         self, level: str, message: str, extra: dict[str, Any] | None = None, exc_info: bool = False
     ) -> None:
-        """Internal method that handles extra={} conversion to Loguru's bind().
-
-        Args:
-            level: Log level name (debug, info, warning, error, critical).
-            message: The log message.
-            extra: Optional structured context dictionary.
-            exc_info: Whether the exception should be logged or not (use only inside try/except).
-        """
         log_extra = extra or {}
 
         bound = self._logger.bind(**log_extra)
@@ -348,66 +195,27 @@ class LoguruLogger:
         getattr(bound.opt(depth=2, exception=exc_info), level)(message)
 
     def debug(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
-        """Log a debug message.
-
-        Args:
-            message: The log message.
-            extra: Optional structured context dictionary.
-        """
+        """Log a debug message."""
         self._log("debug", message, extra)
 
     def info(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
-        """Log an info message.
-
-        Args:
-            message: The log message.
-            extra: Optional structured context dictionary.
-        """
+        """Log an info message."""
         self._log("info", message, extra)
 
     def warning(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
-        """Log a warning message.
-
-        Args:
-            message: The log message.
-            extra: Optional structured context dictionary.
-        """
+        """Log a warning message."""
         self._log("warning", message, extra)
 
     def error(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
-        """Log an error message.
-
-        Args:
-            message: The log message.
-            extra: Optional structured context dictionary.
-        """
+        """Log an error message."""
         self._log("error", message, extra)
 
     def critical(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
-        """Log a critical message.
-
-        Args:
-            message: The log message.
-            extra: Optional structured context dictionary.
-        """
+        """Log a critical message."""
         self._log("critical", message, extra)
 
     def exception(self, message: str, /, extra: dict[str, Any] | None = None) -> None:
-        """Log an error message with exception traceback.
-
-        Should be called from within an exception handler. If called without
-        an active exception, logs a warning instead of a traceback.
-
-        Args:
-            message: The log message.
-            extra: Optional structured context dictionary.
-
-        Example:
-            >>> try:
-            ...     _ = 1 / 0
-            ... except ZeroDivisionError:
-            ...     logger.exception("Failed", extra={"input": "extra information"})
-        """
+        """Log error with traceback. Must be called inside an exception handler."""
         if sys.exc_info()[0] is None:
             extra = extra or {}
             extra["warning"] = "You called logger.exception() with no active exception."
@@ -418,33 +226,18 @@ class LoguruLogger:
 
     @classmethod
     def _reset(cls) -> None:
-        """Reset singleton state for testing purposes.
-
-        Warning:
-            This method is intended for testing only. Do not use in production.
-        """
         cls._instance = None
 
 
 class TqdmToLoguru:
-    """Standard output proxy for tqdm to Loguru redirection.
-
-    Acts as a file-like object that intercepts tqdm progress strings and
-    forwards them to a specified Loguru logging function instead of sys.stderr.
-    """
+    """File-like proxy redirecting tqdm progress output to Loguru."""
 
     def __init__(self, logger_func: Callable):
-        """Initialize the proxy object."""
         self.logger_func = logger_func
         self.buf = ""
 
     def write(self, buf: str) -> None:
-        """Clean and forward the tqdm buffer to the logger.
-
-        Args:
-            buf: Raw string buffer received from tqdm, often containing
-                 control characters like carriage returns.
-        """
+        """Forward cleaned tqdm buffer to the logger."""
         self.buf = buf.strip("\r\n\t ")
         if self.buf:
             self.logger_func(self.buf)

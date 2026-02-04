@@ -1,9 +1,4 @@
-"""Exception handling utilities for uniform logging.
-
-This module provides the ``log_exception_with_extra`` helper to ensure consistent
-error reporting across the project, specifically by extracting structured metadata
-from custom project exceptions inherited from BaseProjectException.
-"""
+"""Exception handling utilities for uniform structured logging."""
 
 from de_projet_perso.core.exceptions import BaseProjectException
 from de_projet_perso.core.logger import logger
@@ -13,26 +8,9 @@ def log_exception_with_extra(
     exception: Exception,
     include_traceback: bool = False,
 ) -> None:
-    """Log an exception with its structured metadata as extra fields.
+    """Log an exception with structured metadata from to_dict() if available.
 
-    This helper bridges custom exceptions and the structured logger. If the
-    exception is a subclass of ``BaseProjectException``, it automatically
-    invokes its ``to_dict()`` method to enrich the log record with context.
-
-    Args:
-        exception: The exception instance to log. While any Exception is accepted,
-                   structured logging is only fully supported for ``BaseProjectException``.
-        include_traceback: If True, includes the full exception traceback in the log.
-                           Use this for unexpected errors where stack trace is valuable.
-                           Default: False (only logs message + extra).
-
-    Returns:
-        None
-
-    Note:
-        If ``to_dict()`` fails during extraction, the function falls back to
-        logging the error message with a warning in the extra fields to prevent
-        losing the original log event.
+    Falls back gracefully if to_dict() fails or exception is not a BaseProjectException.
     """
     log_method = getattr(logger, "exception" if include_traceback else "error", logger.error)
 

@@ -1,30 +1,4 @@
-"""Application settings with Pydantic validation.
-
-This module provides centralized configuration for the data engineering pipeline.
-Settings can be customized via environment variables with the ENV_ prefix, an '.env' file,
-or default values.
-
-Key Environment Variables:
-    ENV_LOGGING_LEVEL: Logger verbosity (DEBUG, INFO, etc. Default: INFO)
-    ENV_AIRFLOW_LOGGER_NAME: Logger name for Airflow UI (Default: MY_LOGGER)
-    AIRFLOW_HOME: Standard Airflow path (No 'ENV_' prefix. Default: /opt/airflow)
-
-    ENV_DOWNLOAD_CHUNK_SIZE: Streaming download chunk size (Default: 1024 * 1024)
-    ENV_DOWNLOAD_TIMEOUT_TOTAL: Total download timeout (Default: 600)
-    ENV_DOWNLOAD_TIMEOUT_CONNECT: Connection timeout in seconds (default: 10)
-    ENV_DOWNLOAD_TIMEOUT_SOCK_READ: Socket read timeout in seconds (default: 30)
-
-    ENV_HASH_ALGORITHM: Hashing algorithm (Default: sha256)
-    ENV_HASH_CHUNK_SIZE: Chunk size for file hashing (Default: 1024 * 128)
-
-Example:
-    >>> from de_projet_perso.core.settings import settings # noqa
-    ... print(settings.data_dir_path)
-
-    # Override via environment
-    export ENV_DOWNLOAD_CHUNK_SIZE=2097152
-    export ENV_RETRY_MAX_ATTEMPTS=5
-"""
+"""Centralized application settings (Pydantic). Override via ENV_ prefixed environment variables."""
 
 from pathlib import Path
 from typing import Literal, Self
@@ -34,13 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings with environment variable support.
-
-    All settings can be overridden via environment variables with prefix ENV_
-    Example: ENV_DOWNLOAD_CHUNK_SIZE=2097152
-
-    Settings are immutable (frozen=True) to prevent accidental modifications.
-    """
+    """Immutable application settings. Override via ENV_ prefixed variables or .env file."""
 
     # =========================================================================
     # General config
@@ -130,6 +98,14 @@ class Settings(BaseSettings):
         """Path to pipeline state directory."""
         return self.data_dir_path / "_state"
 
+    @computed_field
+    @property
+    def secrets_dir_path(self) -> DirectoryPath:
+        if self.is_running_on_airflow:
+            return Path("/run/secrets")
+
+        return self.root_dir / "secrets"
+
     # =========================================================================
     # Download Settings
     # =========================================================================
@@ -190,17 +166,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_timeout_hierarchy(self) -> Self:
-        """Validate that total timeout is greater than component timeouts.
-
-        Ensures logical consistency: total download timeout must exceed
-        both connection establishment and socket read timeouts.
-
-        Returns:
-            Self (for method chaining)
-
-        Raises:
-            ValueError: If timeout hierarchy is invalid
-        """
+        """Ensure total timeout exceeds connect and read timeouts."""
         if self.download_timeout_total <= self.download_timeout_connect:
             raise ValueError("download_timeout_total must be > download_timeout_connect")
 
